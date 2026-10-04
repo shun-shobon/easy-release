@@ -39,6 +39,7 @@ export interface ReleaseRepository {
   listReleases(): Promise<Release[]>;
   getRelease(id: number): Promise<Release>;
   createTag(tag: string, commit: string): Promise<void>;
+  updateTag(tag: string, commit: string): Promise<void>;
   createDraft(tag: string, commit: string): Promise<Release>;
   listAssets(releaseId: number): Promise<ReleaseAsset[]>;
   publishRelease(id: number): Promise<Release>;

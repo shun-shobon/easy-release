@@ -1,6 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import { bumpVersion, isStableVersion, latestVersion } from "./version";
+import { bumpVersion, isStableVersion, latestVersion, versionTags } from "./version";
+
+describe("versionTags", () => {
+  it.each([
+    ["v1.2.3", "v", ["v1", "v1.2"]],
+    ["app/0.2.3", "app/", ["app/0", "app/0.2"]],
+    ["1.0.0", "", ["1", "1.0"]],
+    ["release21.2.3", "release2", ["release21", "release21.2"]],
+  ])("derives major and minor tags from %s", (tag, prefix, expected) => {
+    expect(versionTags(tag, prefix)).toEqual(expected);
+  });
+
+  it.each(["other1.2.3", "v1.2", "v01.2.3", "v1.2.3-rc.1", "v1.2.3+build", "v1.2.3\n"])(
+    "rejects invalid release tag %j",
+    (tag) => {
+      expect(() => versionTags(tag, "v")).toThrow();
+    },
+  );
+});
 
 describe("isStableVersion", () => {
   it("accepts only canonical stable versions", () => {
@@ -49,6 +67,8 @@ describe("latestVersion", () => {
       latestVersion(
         [
           "v1.2.3",
+          "v99",
+          "v99.99",
           "v9.0.0-beta.1",
           "v9.0.0+build",
           "v01.0.0",

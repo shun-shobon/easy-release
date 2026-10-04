@@ -12,7 +12,7 @@ inputs:
     description: GitHub token with contents write access and pull-requests write access for prepare.
     default: ${{ github.token }}
   config:
-    description: Config path relative to the repository root (prepare and draft).
+    description: Config path relative to the repository root.
     default: .github/easy-release.json
   release-type:
     description: Version bump (major, minor, or patch) for prepare.

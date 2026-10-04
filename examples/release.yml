@@ -81,6 +81,9 @@ jobs:
     if: needs.draft.outputs.ready == 'true'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.draft.outputs.commit }}
       - uses: shun-shobon/easy-release@v0.1.0
         with:
           mode: publish

@@ -25,15 +25,22 @@ async function main() {
   const token = getInput("token", { required: true });
   setSecret(token);
 
+  const nonempty = v.pipe(v.string(), v.minLength(1));
   const environment = v.parse(
     v.object({
       GITHUB_API_URL: v.pipe(v.string(), v.url()),
       GITHUB_REPOSITORY: v.pipe(v.string(), v.regex(/^[\w.-]+\/[\w.-]+$/)),
+      GITHUB_WORKSPACE: nonempty,
     }),
     process.env,
   );
   const github = new GitHub(environment.GITHUB_API_URL, environment.GITHUB_REPOSITORY, token);
   const releases = new ReleaseService(github);
+
+  const root = resolve(environment.GITHUB_WORKSPACE);
+  const configPath = resolve(root, getInput("config", { required: true }));
+  const configSource = await readFile(configPath, "utf8");
+  const config = v.parse(configSchema, JSON.parse(configSource));
 
   let outputs: Record<string, string | number | boolean>;
 
@@ -45,12 +52,11 @@ async function main() {
       ),
       tag: getInput("tag", { required: true }),
       commit: getInput("commit", { required: true }),
+      versionTags: config.updateVersionTags ? { prefix: config.tagPrefix } : undefined,
     });
   } else {
-    const nonempty = v.pipe(v.string(), v.minLength(1));
     const checkout = v.parse(
       v.object({
-        GITHUB_WORKSPACE: nonempty,
         GITHUB_EVENT_NAME: nonempty,
         GITHUB_EVENT_PATH: nonempty,
         GITHUB_SHA: nonempty,
@@ -58,11 +64,6 @@ async function main() {
       }),
       process.env,
     );
-
-    const root = resolve(checkout.GITHUB_WORKSPACE);
-    const configPath = resolve(root, getInput("config", { required: true }));
-    const configSource = await readFile(configPath, "utf8");
-    const config = v.parse(configSchema, JSON.parse(configSource));
 
     const eventSource = await readFile(checkout.GITHUB_EVENT_PATH, "utf8");
     const event: unknown = JSON.parse(eventSource);

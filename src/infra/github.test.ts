@@ -17,6 +17,52 @@ function client(fetcher: typeof fetch, timeoutMs = 30_000) {
 }
 
 describe("GitHub", () => {
+  it("force updates an existing tag with updateRef", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(reference));
+
+    await client(fetcher).updateTag("app/v1", sha);
+
+    expect(fetcher.mock.calls[0]?.[0]).toBe(
+      "https://api.github.com/repos/owner/repo/git/refs/tags%2Fapp%2Fv1",
+    );
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({
+      method: "PATCH",
+      body: JSON.stringify({ sha, force: true }),
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([403, 404, 422, 503])(
+    "rejects HTTP %i when updating a tag without retrying or creating it",
+    async (status) => {
+      const fetcher = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(Response.json({ message: "secret" }, { status }));
+
+      await expect(client(fetcher).updateTag("v1", sha)).rejects.toThrow(`HTTP ${status}`);
+
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["network", "timeout"])("stops tag updates on a %s failure", async (failure) => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_input, init) => {
+      if (failure === "network") {
+        throw new Error("secret");
+      }
+
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("secret")), { once: true });
+      });
+    });
+
+    await expect(client(fetcher, 50).updateTag("v1", sha)).rejects.toThrow(
+      failure === "network" ? "connect" : "timed out",
+    );
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("creates an empty commit using the parent tree without creating blobs or a tree", async () => {
     const tree = "b".repeat(40);
     const commit = "c".repeat(40);
