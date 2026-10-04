@@ -13,7 +13,10 @@ import { PreparationService } from "../services/preparation";
 import { ReleaseService, type PublishInput } from "../services/releases";
 import { draft as executeDraft } from "../usecases/draft";
 import { prepare as executePrepare } from "../usecases/prepare";
-import { publish as executePublish } from "../usecases/publish";
+import {
+  publish as executePublish,
+  publishMerged as executePublishMerged,
+} from "../usecases/publish";
 import type { ReleaseType } from "../utils/version";
 
 import { parseReleaseEvent } from "./action-event";
@@ -63,6 +66,14 @@ function prepare(config: Config, context: FixtureContext, github: GitHub, type: 
 
 async function draft(config: Config, context: FixtureContext, github: GitHub) {
   return executeDraft(
+    config,
+    { ...context, event: parseReleaseEvent(context.eventName, context.event) },
+    services(context.root, github),
+  );
+}
+
+function publishMerged(config: Config, context: FixtureContext, github: GitHub) {
+  return executePublishMerged(
     config,
     { ...context, event: parseReleaseEvent(context.eventName, context.event) },
     services(context.root, github),
@@ -364,6 +375,128 @@ describe("prepare and draft lifecycle", () => {
 
   const reference = { object: { type: "commit", sha } };
   const missing = () => new Response("", { status: 404 });
+
+  it.each([false, true])(
+    "publishes directly from a merged PR with existing draft %s",
+    async (existing) => {
+      const { github, calls } = client([
+        ...(existing ? [[release], reference] : [[], missing(), reference, release]),
+        release,
+        reference,
+        [],
+        { ...release, draft: false },
+      ]);
+
+      await expect(publishMerged(config, merged(), github)).resolves.toMatchObject({
+        ready: true,
+        version: "1.2.3",
+        tag: "v1.2.3",
+        commit: sha,
+        releaseId: 9,
+      });
+      expect(assertCheckout).toHaveBeenCalledWith(root, sha);
+      expect(calls.filter((call) => call.method === "POST")).toHaveLength(existing ? 0 : 2);
+      expect(calls.at(-1)).toMatchObject({
+        method: "PATCH",
+        body: { draft: false, make_latest: "true" },
+      });
+    },
+  );
+
+  it("updates version tags after publishing directly from a merged PR", async () => {
+    const { github, calls } = client([
+      [],
+      missing(),
+      reference,
+      release,
+      release,
+      reference,
+      [],
+      { ...release, draft: false },
+      reference,
+      reference,
+      missing(),
+      reference,
+    ]);
+
+    await expect(
+      publishMerged({ ...config, updateVersionTags: true }, merged(), github),
+    ).resolves.toMatchObject({ ready: true, releaseId: 9 });
+
+    expect(calls.filter((call) => call.method !== "GET").slice(-3)).toEqual([
+      {
+        method: "PATCH",
+        path: "https://api.github.com/repos/o/r/releases/9",
+        body: { draft: false, make_latest: "true" },
+      },
+      {
+        method: "PATCH",
+        path: "https://api.github.com/repos/o/r/git/refs/tags/v1",
+        body: { sha, force: true },
+      },
+      {
+        method: "POST",
+        path: "https://api.github.com/repos/o/r/git/refs",
+        body: { ref: "refs/tags/v1.2", sha },
+      },
+    ]);
+  });
+
+  it("rejects already published releases without any mutations", async () => {
+    const { github, calls } = client([[{ ...release, draft: false }]]);
+
+    await expect(publishMerged(config, merged(), github)).rejects.toThrow("already published");
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("does not publish from a merge with mismatching package versions", async () => {
+    await writeFile(join(root, "package.json"), '{"version":"9.0.0"}');
+    const { github, calls } = client([]);
+
+    await expect(publishMerged(config, merged(), github)).rejects.toThrow("version");
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each([{ draft: false }, { tag_name: "v9.0.0" }, { target_commitish: "other" }])(
+    "rejects an inconsistent draft creation response: %j",
+    async (change) => {
+      const { github, calls } = client([[], missing(), reference, { ...release, ...change }]);
+
+      await expect(publishMerged(config, merged(), github)).rejects.toThrow("expected draft");
+      expect(calls.some((call) => call.method === "PATCH")).toBe(false);
+    },
+  );
+
+  it.each(["network", "timeout"])(
+    "stops publication on a %s failure creating the draft",
+    async (failure) => {
+      const responses = [Response.json([]), missing(), Response.json(reference)];
+      const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_input, init) => {
+        const response = responses.shift();
+
+        if (response) {
+          return response;
+        }
+
+        if (failure === "network") {
+          throw new Error("network failed");
+        }
+
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("timeout")), {
+            once: true,
+          });
+        });
+      });
+      const github = new GitHub("https://api.github.com", "o/r", "test", fetcher, 50);
+
+      await expect(publishMerged(config, merged(), github)).rejects.toThrow(
+        failure === "network" ? "connect" : "timed out",
+      );
+      expect(fetcher).toHaveBeenCalledTimes(4);
+      expect(fetcher.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+    },
+  );
 
   it.each([{ packageFiles: ["package.json"] }, { packageFiles: [] }])(
     "creates a preparation PR with an empty commit for package targets $packageFiles",

@@ -15,13 +15,14 @@
 
 - `usecases/prepare.ts` は準備 PR 作成までの順序を制御します。
 - `usecases/draft.ts` は対象イベントを判定し、マージ結果の検証とドラフト作成を組み合わせます。
-- `usecases/publish.ts` は公開をサービスへ依頼します。各 usecase は必要なサービス操作だけに依存し、HTTP パスや GitHub の応答スキーマは扱いません。
+- `usecases/publish.ts` は指定済みリリースの公開をサービスへ依頼します。マージからの公開では draft のイベント判定・マージ検証・ドラフト作成を再利用し、その結果を公開処理へ渡します。対象外の PR や途中の失敗では公開しません。各 usecase は必要なサービス操作だけに依存し、HTTP パスや GitHub の応答スキーマは扱いません。
 - `services/releases.ts` はタグ一覧から現在版を決め、PR・タグ・リリースの状態を判定します。変更コミットを保存してから前の PR を閉じ、全アセットを確認してから公開します。
 - メジャー・マイナータグの更新が有効な場合、`services/releases.ts` は公開前にタグ名を検証し、公開成功後に存在確認と作成・更新を順に実行します。既存タグの移動は `ReleaseRepository.updateTag` に依頼し、`infra/github.ts` が `rest.git.updateRef` を `force: true` で呼びます。未存在の場合は既存の `createTag` を使います。
 - `services/preparation.ts` はタグ由来の現在版を増分し、checkout、ファイル更新、更新コマンド、最終検証を組み合わせます。検証後の変更一覧が空でも準備を継続します。マージ時の予定版は準備ブランチ名から取得します。
 - `services/packages.ts` は JSON を検証して指定された共通版を書き込み、更新後の版を確認します。ファイルの選択・読み書きは `PackageFileStore` に依頼します。
 - `infra/github.ts` は Octokit の `rest.git`、`rest.pulls`、`rest.repos` の API 別メソッドを呼びます。認証、タイムアウト、ページ送り、応答の契約型への変換をここで行います。
 - `infra/workspace.ts` と `infra/package-files.ts` は Git・Bash・ファイル操作を実装します。更新コマンドに独自の制限時間は設けず、終了結果と出力上限を確認します。Git の変更はバイナリや削除も含めて `FileChange` として渡します。
+- `infra/action-input.ts` は publish の3入力を検証します。すべて省略した場合はマージからの公開、すべて指定した場合は既存ドラフトの公開を選び、一部だけの指定は拒否します。`src/index.ts` は全モードで設定を読み込み、この判定に従ってマージからの公開に必要なイベントを読み込み、checkout の検証を実行します。
 - `infra/action-event.ts` は GitHub のイベント JSON からリポジトリのデフォルトブランチを取得し、ユースケース向けの `ReleaseEvent` に変換します。
 - `utils/version.ts` は `semver.parse`、`semver.gt`、`semver.inc` を使用します。安定版 `X.Y.Z` のみを認める制約を、その解析結果に対して適用します。
 - `utils/version.ts` の `versionTags` は接頭辞を取り除いた安定版を検証し、semver の major / minor から更新する2つのタグ名を生成します。
@@ -38,9 +39,11 @@ GitHub の各操作は Octokit の API 別メソッドを直接呼びます。�
 
 ## 配布とジョブ間の連携
 
-draft と publish の間には利用側のビルド・アセット添付が入るため、`release-id`、`tag`、`commit` を明示的に受け渡します。publish は API 上の状態を再検証します。全ビルドの完了は利用側のステップ順序またはジョブ間の `needs` で制御し、共通 Action には Docker や各言語のビルド手順を組み込みません。
+アセット添付を行う構成では、draft と publish の間に利用側のビルド・アセット添付が入るため、`release-id`、`tag`、`commit` を明示的に受け渡します。publish は API 上の状態を再検証します。全ビルドの完了は利用側のステップ順序またはジョブ間の `needs` で制御し、共通 Action には Docker や各言語のビルド手順を組み込みません。
 
-`src/index.ts` は全モードの分岐前に、`config` 入力が指す設定ファイルを読み込み、`services/config.ts` のスキーマで検証します。publish は設定の `updateVersionTags` が有効なら `tagPrefix` をサービスへ渡し、無効ならタグ更新設定を渡しません。公開後のタグ更新で失敗しても、公開済み状態や更新済みタグは巻き戻しません。
+アセット添付を行わない構成では prepare → publish を使用できます。publish の3入力を省略し、準備 PR のマージコミットを checkout します。内部ではドラフト作成から公開まで連続して実行し、`ready` と `version` も出力します。必要なビルドや検証は publish の前に完了させます。
+
+`src/index.ts` は全モードの分岐前に、`config` 入力が指す設定ファイルを読み込み、`services/config.ts` のスキーマで検証します。publish は draft の有無にかかわらず、設定の `updateVersionTags` が有効なら `tagPrefix` をサービスへ渡し、無効ならタグ更新設定を渡しません。公開後のタグ更新で失敗しても、公開済み状態や更新済みタグは巻き戻しません。
 
 配布時は tsdown で実行時依存を `dist/index.mjs` に束ねます。`action.yml` はそのファイルを直接実行します。
 
