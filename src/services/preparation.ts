@@ -48,13 +48,8 @@ export class PreparationService {
     }
 
     await this.packages.verify(updated.files, updated.version);
-    const changes = await this.workspace.collectChanges();
 
-    if (changes.length === 0) {
-      throw new Error("No changes to prepare for release.");
-    }
-
-    return changes;
+    return this.workspace.collectChanges();
   }
 
   async verifyMerged(config: Config, commit: string, branch: string) {

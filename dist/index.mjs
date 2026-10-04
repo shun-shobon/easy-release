@@ -23970,15 +23970,19 @@ var GitHub = class {
 				sha
 			});
 		}
-		const { data: newTree } = await this.octokit.rest.git.createTree({
-			...this.repository,
-			base_tree: parent.tree.sha,
-			tree
-		});
+		let treeSha = parent.tree.sha;
+		if (tree.length > 0) {
+			const { data: newTree } = await this.octokit.rest.git.createTree({
+				...this.repository,
+				base_tree: parent.tree.sha,
+				tree
+			});
+			treeSha = newTree.sha;
+		}
 		const { data: commit } = await this.octokit.rest.git.createCommit({
 			...this.repository,
 			message: input.message,
-			tree: newTree.sha,
+			tree: treeSha,
 			parents: [input.parent]
 		});
 		return commit.sha;
@@ -25802,9 +25806,7 @@ var PreparationService = class {
 	async finish(config, updated) {
 		if (config.updateCommand) await this.workspace.runUpdateCommand(config.updateCommand, updated.previousVersion, updated.version);
 		await this.packages.verify(updated.files, updated.version);
-		const changes = await this.workspace.collectChanges();
-		if (changes.length === 0) throw new Error("No changes to prepare for release.");
-		return changes;
+		return this.workspace.collectChanges();
 	}
 	async verifyMerged(config, commit, branch) {
 		await this.workspace.assertCheckout(commit);
@@ -25884,7 +25886,7 @@ var ReleaseService = class {
 			base: input.baseBranch,
 			branch,
 			title: `chore: prepare release ${tag}`,
-			body: `Update the selected files to version ${input.version}.\n\nMerging this PR creates a draft release. The release is published after the build and asset upload succeed.`
+			body: `Prepare version ${input.version} for release.\n\nMerging this PR creates a draft release. The release is published after the build and asset upload succeed.`
 		});
 		return {
 			version: input.version,

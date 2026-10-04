@@ -17,6 +17,52 @@ function client(fetcher: typeof fetch, timeoutMs = 30_000) {
 }
 
 describe("GitHub", () => {
+  it("creates an empty commit using the parent tree without creating blobs or a tree", async () => {
+    const tree = "b".repeat(40);
+    const commit = "c".repeat(40);
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ tree: { sha: tree } }))
+      .mockResolvedValueOnce(Response.json({ sha: commit }));
+
+    await expect(
+      client(fetcher).createCommit({ parent: sha, message: "prepare release", changes: [] }),
+    ).resolves.toBe(commit);
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[1]?.[0]).toBe("https://api.github.com/repos/owner/repo/git/commits");
+    expect(fetcher.mock.calls[1]?.[1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({ message: "prepare release", tree, parents: [sha] }),
+    });
+  });
+
+  it.each(["network", "timeout"])(
+    "stops empty commit creation on a %s failure",
+    async (failure) => {
+      const fetcher = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(Response.json({ tree: { sha } }))
+        .mockImplementation(async (_input, init) => {
+          if (failure === "network") {
+            throw new Error("secret");
+          }
+
+          return new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(new Error("secret")), {
+              once: true,
+            });
+          });
+        });
+
+      await expect(
+        client(fetcher, 50).createCommit({ parent: sha, message: "prepare release", changes: [] }),
+      ).rejects.toThrow(failure === "network" ? "connect" : "timed out");
+
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it("creates a draft with createRelease and maps the API response", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(release));
     const github = new GitHub("https://api.example.com/api/v3/", "owner/repo", "secret", fetcher);

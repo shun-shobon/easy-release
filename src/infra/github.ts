@@ -153,15 +153,21 @@ export class GitHub implements ReleaseRepository {
       tree.push({ path: change.path, mode: change.mode, type: "blob", sha });
     }
 
-    const { data: newTree } = await this.octokit.rest.git.createTree({
-      ...this.repository,
-      base_tree: parent.tree.sha,
-      tree,
-    });
+    let treeSha = parent.tree.sha;
+
+    if (tree.length > 0) {
+      const { data: newTree } = await this.octokit.rest.git.createTree({
+        ...this.repository,
+        base_tree: parent.tree.sha,
+        tree,
+      });
+      treeSha = newTree.sha;
+    }
+
     const { data: commit } = await this.octokit.rest.git.createCommit({
       ...this.repository,
       message: input.message,
-      tree: newTree.sha,
+      tree: treeSha,
       parents: [input.parent],
     });
 

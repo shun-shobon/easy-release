@@ -17,7 +17,7 @@
 - `usecases/draft.ts` は対象イベントを判定し、マージ結果の検証とドラフト作成を組み合わせます。
 - `usecases/publish.ts` は公開をサービスへ依頼します。各 usecase は必要なサービス操作だけに依存し、HTTP パスや GitHub の応答スキーマは扱いません。
 - `services/releases.ts` はタグ一覧から現在版を決め、PR・タグ・リリースの状態を判定します。変更コミットを保存してから前の PR を閉じ、全アセットを確認してから公開します。
-- `services/preparation.ts` はタグ由来の現在版を増分し、checkout、ファイル更新、更新コマンド、最終検証を組み合わせます。マージ時の予定版は準備ブランチ名から取得します。
+- `services/preparation.ts` はタグ由来の現在版を増分し、checkout、ファイル更新、更新コマンド、最終検証を組み合わせます。検証後の変更一覧が空でも準備を継続します。マージ時の予定版は準備ブランチ名から取得します。
 - `services/packages.ts` は JSON を検証して指定された共通版を書き込み、更新後の版を確認します。ファイルの選択・読み書きは `PackageFileStore` に依頼します。
 - `infra/github.ts` は Octokit の `rest.git`、`rest.pulls`、`rest.repos` の API 別メソッドを呼びます。認証、タイムアウト、ページ送り、応答の契約型への変換をここで行います。
 - `infra/workspace.ts` と `infra/package-files.ts` は Git・Bash・ファイル操作を実装します。更新コマンドに独自の制限時間は設けず、終了結果と出力上限を確認します。Git の変更はバイナリや削除も含めて `FileChange` として渡します。
@@ -43,6 +43,8 @@ draft と publish の間には利用側のビルド・アセット添付が入�
 ローカルモジュールの import は拡張子を省略します。TypeScript は `moduleResolution: bundler` で解決し、実行用ファイルは tsdown でバンドルします。
 
 このリポジトリの `.github/workflows/release.yml` は `uses: ./` で自身の Action を実行します。prepare は共通 setup で依存関係を準備し、`.github/easy-release.json` に従ってバージョン更新と `pnpm format` を行います。準備 PR のマージ後は draft、publish を別ジョブで実行し、タグ上の `action.yml` と `dist/index.mjs` を配布します。
+
+変更一覧が空の場合、`infra/github.ts` は blob と tree の作成を省略し、親コミットの tree をそのまま指定して準備コミットを作成します。ブランチと PR の作成は差分がある場合と同じ処理です。実際の Git リポジトリを使って空の変更一覧を検証し、HTTP 境界のテストで親の tree を使った空コミットから PR 作成までを確認します。
 
 ## CI
 

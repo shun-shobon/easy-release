@@ -298,6 +298,76 @@ describe("prepare and draft lifecycle", () => {
   const reference = { object: { type: "commit", sha } };
   const missing = () => new Response("", { status: 404 });
 
+  it.each([{ packageFiles: ["package.json"] }, { packageFiles: [] }])(
+    "creates a preparation PR with an empty commit for package targets $packageFiles",
+    async ({ packageFiles }) => {
+      await writeFile(join(root, "package.json"), '{"version":"0.1.0"}\n');
+      vi.mocked(collectChanges).mockResolvedValue([]);
+      const commit = "b".repeat(40);
+      const tree = "c".repeat(40);
+      const { github, calls } = client(
+        [
+          reference,
+          missing(),
+          [],
+          missing(),
+          { tree: { sha: tree } },
+          { sha: commit },
+          { object: { type: "commit", sha: commit } },
+          { number: 10, html_url: "https://github.com/o/r/pull/10" },
+        ],
+        [],
+      );
+
+      await expect(
+        prepare({ ...config, packageFiles }, context(), github, "minor"),
+      ).resolves.toMatchObject({ version: "0.1.0", commit, pullRequestNumber: 10 });
+
+      expect(calls.filter((call) => call.method === "POST")).toEqual([
+        {
+          method: "POST",
+          path: "https://api.github.com/repos/o/r/git/commits",
+          body: expect.objectContaining({ tree, parents: [sha] }),
+        },
+        {
+          method: "POST",
+          path: "https://api.github.com/repos/o/r/git/refs",
+          body: { ref: "refs/heads/release/prepare-v0.1.0", sha: commit },
+        },
+        {
+          method: "POST",
+          path: "https://api.github.com/repos/o/r/pulls",
+          body: expect.objectContaining({ base: "main", head: "release/prepare-v0.1.0" }),
+        },
+      ]);
+    },
+  );
+
+  it.each([422, 503])(
+    "keeps the previous PR when empty commit creation fails with HTTP %i",
+    async (status) => {
+      vi.mocked(collectChanges).mockResolvedValue([]);
+      const { github, calls } = client([
+        reference,
+        missing(),
+        [{ number: 1, head: { ref: "release/prepare-v1.2.5", repo: { full_name: "o/r" } } }],
+        missing(),
+        { tree: { sha } },
+        new Response("", { status }),
+      ]);
+
+      await expect(prepare(config, context(), github, "patch")).rejects.toThrow(`HTTP ${status}`);
+
+      expect(calls.filter((call) => call.method !== "GET")).toEqual([
+        {
+          method: "POST",
+          path: "https://api.github.com/repos/o/r/git/commits",
+          body: expect.objectContaining({ tree: sha, parents: [sha] }),
+        },
+      ]);
+    },
+  );
+
   it("creates a draft on the merge commit with generated release notes", async () => {
     const { github, calls } = client([[], missing(), reference, release]);
 

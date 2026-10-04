@@ -92,7 +92,7 @@ export class ReleaseService {
       base: input.baseBranch,
       branch,
       title: `chore: prepare release ${tag}`,
-      body: `Update the selected files to version ${input.version}.\n\nMerging this PR creates a draft release. The release is published after the build and asset upload succeed.`,
+      body: `Prepare version ${input.version} for release.\n\nMerging this PR creates a draft release. The release is published after the build and asset upload succeed.`,
     });
 
     return {
