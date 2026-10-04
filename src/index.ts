@@ -5,6 +5,7 @@ import { getInput, info, setFailed, setOutput, setSecret } from "@actions/core";
 import * as v from "valibot";
 
 import { parseDefaultBranch, parseReleaseEvent } from "./infra/action-event";
+import { parsePublishInput } from "./infra/action-input";
 import { GitHub } from "./infra/github";
 import { FileSystemPackages } from "./infra/package-files";
 import { createWorkspace } from "./infra/workspace";
@@ -14,7 +15,7 @@ import { PreparationService } from "./services/preparation";
 import { ReleaseService } from "./services/releases";
 import { draft } from "./usecases/draft";
 import { prepare } from "./usecases/prepare";
-import { publish } from "./usecases/publish";
+import { publish, publishMerged } from "./usecases/publish";
 
 async function main() {
   const mode = v.parse(
@@ -43,15 +44,14 @@ async function main() {
   const config = v.parse(configSchema, JSON.parse(configSource));
 
   let outputs: Record<string, string | number | boolean>;
+  const publishInput =
+    mode === "publish"
+      ? parsePublishInput(getInput("release-id"), getInput("tag"), getInput("commit"))
+      : undefined;
 
-  if (mode === "publish") {
+  if (publishInput) {
     outputs = await publish(releases, {
-      releaseId: v.parse(
-        v.pipe(v.string(), v.transform(Number), v.number(), v.safeInteger(), v.minValue(1)),
-        getInput("release-id", { required: true }),
-      ),
-      tag: getInput("tag", { required: true }),
-      commit: getInput("commit", { required: true }),
+      ...publishInput,
       versionTags: config.updateVersionTags ? { prefix: config.tagPrefix } : undefined,
     });
   } else {
@@ -86,8 +86,10 @@ async function main() {
         getInput("release-type", { required: true }),
       );
       outputs = await prepare(config, context, services, type);
-    } else {
+    } else if (mode === "draft") {
       outputs = await draft(config, context, services);
+    } else {
+      outputs = await publishMerged(config, context, services);
     }
   }
 

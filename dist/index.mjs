@@ -17327,6 +17327,20 @@ function parseReleaseEvent(name, value) {
 	};
 }
 //#endregion
+//#region src/infra/action-input.ts
+function parsePublishInput(releaseId, tag, commit) {
+	if (releaseId === "" && tag === "" && commit === "") return;
+	return parse$3(/* @__PURE__ */ object({
+		releaseId: /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ transform(Number), /* @__PURE__ */ number(), /* @__PURE__ */ safeInteger(), /* @__PURE__ */ minValue(1)),
+		tag: /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ minLength(1)),
+		commit: /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ minLength(1))
+	}), {
+		releaseId,
+		tag,
+		commit
+	});
+}
+//#endregion
 //#region node_modules/.pnpm/universal-user-agent@7.0.3/node_modules/universal-user-agent/index.js
 function getUserAgent() {
 	if (typeof navigator === "object" && "userAgent" in navigator) return navigator.userAgent;
@@ -25901,7 +25915,7 @@ var ReleaseService = class {
 			base: input.baseBranch,
 			branch,
 			title: `chore: prepare release ${tag}`,
-			body: `Prepare version ${input.version} for release.\n\nMerging this PR creates a draft release. The release is published after the build and asset upload succeed.`
+			body: `Prepare version ${input.version} for release.\n\nAfter merging this PR, run publish to create and publish the release, or run draft first to build and upload assets before publishing.`
 		});
 		return {
 			version: input.version,
@@ -25940,7 +25954,7 @@ var ReleaseService = class {
 //#region src/usecases/draft.ts
 async function draft(config, context, services) {
 	const event = context.event;
-	if (event.kind !== "pull-request") throw new Error("Run draft from a pull_request event.");
+	if (event.kind !== "pull-request") throw new Error("Run this mode from a pull_request event.");
 	if (event.action !== "closed" || !event.merged || event.baseBranch !== context.defaultBranch || event.repository !== context.repository || !managedBranch(config, event.branch)) return { ready: false };
 	if (!event.mergeCommit) throw new Error("The merge commit is missing.");
 	const { version, tag } = await services.preparation.verifyMerged(config, event.mergeCommit, event.branch);
@@ -25976,6 +25990,21 @@ async function prepare(config, context, services, type) {
 function publish(releases, input) {
 	return releases.publish(input);
 }
+async function publishMerged(config, context, services) {
+	const release = await draft(config, context, services);
+	if (!release.ready) return release;
+	const published = await publish(services.releases, {
+		releaseId: release.releaseId,
+		tag: release.tag,
+		commit: release.commit,
+		versionTags: config.updateVersionTags ? { prefix: config.tagPrefix } : void 0
+	});
+	return {
+		ready: true,
+		version: release.version,
+		...published
+	};
+}
 //#endregion
 //#region src/index.ts
 async function main() {
@@ -25998,10 +26027,9 @@ async function main() {
 	const configSource = await readFile(configPath, "utf8");
 	const config = parse$3(configSchema, JSON.parse(configSource));
 	let outputs;
-	if (mode === "publish") outputs = await publish(releases, {
-		releaseId: parse$3(/* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ transform(Number), /* @__PURE__ */ number(), /* @__PURE__ */ safeInteger(), /* @__PURE__ */ minValue(1)), getInput("release-id", { required: true })),
-		tag: getInput("tag", { required: true }),
-		commit: getInput("commit", { required: true }),
+	const publishInput = mode === "publish" ? parsePublishInput(getInput("release-id"), getInput("tag"), getInput("commit")) : void 0;
+	if (publishInput) outputs = await publish(releases, {
+		...publishInput,
 		versionTags: config.updateVersionTags ? { prefix: config.tagPrefix } : void 0
 	});
 	else {
@@ -26030,7 +26058,8 @@ async function main() {
 			"minor",
 			"patch"
 		]), getInput("release-type", { required: true })));
-		else outputs = await draft(config, context, services);
+		else if (mode === "draft") outputs = await draft(config, context, services);
+		else outputs = await publishMerged(config, context, services);
 	}
 	for (const [name, value] of Object.entries(outputs)) setOutput(name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`), value);
 	info(`${mode} completed.`);

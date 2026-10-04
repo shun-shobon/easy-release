@@ -12,7 +12,7 @@ on:
     types: [closed]
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: easy-release
@@ -26,11 +26,13 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
-      - uses: ./.github/actions/setup
-      - uses: ./
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: shun-shobon/easy-release@v0.1.0
         with:
           mode: prepare
           release-type: ${{ inputs.release_type }}
@@ -38,12 +40,10 @@ jobs:
   publish:
     if: github.event_name == 'pull_request' && github.event.pull_request.merged
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.merge_commit_sha }}
-      - uses: ./
+      - uses: shun-shobon/easy-release@v0.1.0
         with:
           mode: publish

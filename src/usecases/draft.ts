@@ -13,7 +13,7 @@ export async function draft(config: Config, context: ReleaseContext, services: D
   const event = context.event;
 
   if (event.kind !== "pull-request") {
-    throw new Error("Run draft from a pull_request event.");
+    throw new Error("Run this mode from a pull_request event.");
   }
 
   if (

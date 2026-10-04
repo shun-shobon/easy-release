@@ -17,14 +17,14 @@ inputs:
   release-type:
     description: Version bump (major, minor, or patch) for prepare.
   release-id:
-    description: Release ID from draft, required for publish.
+    description: Release ID from draft. For publish, provide release-id, tag, and commit together or omit all three to publish from a merged PR.
   tag:
-    description: Tag from draft, required for publish.
+    description: Tag from draft, required when release-id is provided.
   commit:
-    description: Commit from draft, required for publish.
+    description: Commit from draft, required when release-id is provided.
 outputs:
   version:
-    description: Shared version from prepare or draft.
+    description: Shared version from prepare, draft, or publish without release inputs.
   tag:
     description: Release tag.
   commit:
@@ -34,7 +34,7 @@ outputs:
   pull-request-url:
     description: Preparation PR URL.
   ready:
-    description: Whether a draft is ready. False for unrelated PRs.
+    description: Whether draft or publish without release inputs processed a release. False for unrelated PRs.
   release-id:
     description: Release ID from draft or publish.
   release-url:
