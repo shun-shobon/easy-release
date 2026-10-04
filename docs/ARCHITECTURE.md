@@ -1,60 +1,60 @@
 # 内部設計
 
-リリースの実行順序、業務上の判定、外部システムとの接続を分離します。具体的な実装は `src/index.ts` で組み立て、コンストラクターや引数で渡します。
+本 Action では、リリースの実行順序（ワークフロー制御）、業務ロジック（判定処理）、外部システムとの接続（I/O）を疎結合に分離しています。具象クラスのインスタンス化や依存性の注入（DI）は、エントリポイントである `src/index.ts` に集約しています。
 
-| 層         | 責務                                                                                         | 依存先                                                         |
-| ---------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `usecases` | prepare / draft / publish の実行順序とイベントの適用条件                                     | サービスの公開操作、アプリケーションの型、純粋なユーティリティ |
-| `services` | タグからの現在版の決定、準備 PR の置き換え、ドラフトの再利用、公開条件、共通バージョンの更新 | 同層のサービス、外部 I/O の契約、`utils`                       |
-| `infra`    | GitHub・Git・ファイルシステム・Actions イベントとの接続                                      | サービスが定義した契約、SDK、Node.js API                       |
-| `utils`    | 副作用のないバージョン判定と計算                                                             | `semver`                                                       |
+| レイヤー   | 責務                                                                                                               | 依存先                                                                       |
+| ---------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `usecases` | prepare / draft / publish の各モードにおける処理順序の制御と、イベント適用条件の検証                               | サービスの公開操作、アプリケーションの型定義、副作用のないユーティリティ関数 |
+| `services` | タグからの現在バージョンの算出、準備 PR のクローズ・再作成、ドラフトの再利用、公開可否の判定、共通バージョンの更新 | 同一レイヤーのサービス、外部 I/O の契約（インターフェース）、`utils`         |
+| `infra`    | GitHub API・Git・ファイルシステム・GitHub Actions イベントとの接続                                                 | サービスが定義した契約、SDK、Node.js 組み込み API                            |
+| `utils`    | 副作用のないセマンティックバージョンのパース・比較・計算                                                           | `semver`                                                                     |
 
-`usecases` と `services` は `infra` の実装を import しません。`services/definitions.ts` の `ReleaseRepository`、`Workspace`、`PackageFileStore` を infra が実装することで、サービスから実装への依存を避けます。lint でも両層から infra、Node.js API、Octokit、Actions SDK の import を禁止します。
+`usecases` および `services` は、`infra` の具象クラスを直接 import しません。`services/definitions.ts` で定義されたインターフェース（`ReleaseRepository`、`Workspace`、`PackageFileStore`）を `infra` が実装することにより、依存関係逆転の原則（DIP）を適用しています。Oxlint のルールにおいても、これら上位レイヤーから `infra`、Node.js 組み込み API、Octokit、Actions SDK を直接 import することを禁止しています。
 
 ## モジュールの役割
 
-- `usecases/prepare.ts` は準備 PR 作成までの順序を制御します。
-- `usecases/draft.ts` は対象イベントを判定し、マージ結果の検証とドラフト作成を組み合わせます。
-- `usecases/publish.ts` は指定済みリリースの公開をサービスへ依頼します。マージからの公開では draft のイベント判定・マージ検証・ドラフト作成を再利用し、その結果を公開処理へ渡します。対象外の PR や途中の失敗では公開しません。各 usecase は必要なサービス操作だけに依存し、HTTP パスや GitHub の応答スキーマは扱いません。
-- `services/releases.ts` はタグ一覧から現在版を決め、PR・タグ・リリースの状態を判定します。変更コミットを保存してから前の PR を閉じ、全アセットを確認してから公開します。
-- メジャー・マイナータグの更新が有効な場合、`services/releases.ts` は公開前にタグ名を検証し、公開成功後に存在確認と作成・更新を順に実行します。既存タグの移動は `ReleaseRepository.updateTag` に依頼し、`infra/github.ts` が `rest.git.updateRef` を `force: true` で呼びます。未存在の場合は既存の `createTag` を使います。
-- `services/preparation.ts` はタグ由来の現在版を増分し、checkout、ファイル更新、更新コマンド、最終検証を組み合わせます。検証後の変更一覧が空でも準備を継続します。マージ時の予定版は準備ブランチ名から取得します。
-- `services/packages.ts` は JSON を検証して指定された共通版を書き込み、更新後の版を確認します。ファイルの選択・読み書きは `PackageFileStore` に依頼します。
-- `infra/github.ts` は Octokit の `rest.git`、`rest.pulls`、`rest.repos` の API 別メソッドを呼びます。認証、タイムアウト、ページ送り、応答の契約型への変換をここで行います。
-- `infra/workspace.ts` と `infra/package-files.ts` は Git・Bash・ファイル操作を実装します。更新コマンドに独自の制限時間は設けず、終了結果と出力上限を確認します。Git の変更はバイナリや削除も含めて `FileChange` として渡します。
-- `infra/action-input.ts` は publish の3入力を検証します。すべて省略した場合はマージからの公開、すべて指定した場合は既存ドラフトの公開を選び、一部だけの指定は拒否します。`src/index.ts` は全モードで設定を読み込み、この判定に従ってマージからの公開に必要なイベントを読み込み、checkout の検証を実行します。
-- `infra/action-event.ts` は GitHub のイベント JSON からリポジトリのデフォルトブランチを取得し、ユースケース向けの `ReleaseEvent` に変換します。
-- `utils/version.ts` は `semver.parse`、`semver.gt`、`semver.inc` を使用します。安定版 `X.Y.Z` のみを認める制約を、その解析結果に対して適用します。
-- `utils/version.ts` の `versionTags` は接頭辞を取り除いた安定版を検証し、semver の major / minor から更新する2つのタグ名を生成します。
+- `usecases/prepare.ts`: 準備 PR 作成までの処理フロー全体をオーケストレーションします。
+- `usecases/draft.ts`: トリガーとなったイベントを判定し、マージ結果の検証とドラフトリリースの作成処理を組み合わせます。
+- `usecases/publish.ts`: 既存ドラフトの公開処理をサービスに依頼します。準備 PR のマージから直接公開する場合は、draft のイベント判定・マージ検証・ドラフト作成処理を再利用し、その結果をもとに公開処理へ進みます。対象外の PR や途中で処理が失敗した場合は公開を行いません。各 usecase は必要なサービスの操作のみに依存し、REST API のパスや GitHub API のレスポンススキーマは意識しません。
+- `services/releases.ts`: リポジトリのタグ一覧から現在のバージョンを決定し、PR・タグ・リリースの状態判定を行います。変更コミットの作成を確認してから過去の準備 PR をクローズし、すべての添付アセットがアップロード済みであることを確認したうえでリリースを公開します。
+- メジャー・マイナータグの更新が有効な場合、`services/releases.ts` はリリース公開前にタグ名の形式を検証し、公開成功後にタグの存在確認と作成・更新を順次実行します。既存タグの参照先変更は `ReleaseRepository.updateTag` に委譲し、`infra/github.ts` が `rest.git.updateRef` を `force: true` で呼び出します。タグがまだ存在しない場合は、新規作成用の `createTag` を使用します。
+- `services/preparation.ts`: checkout 済みの状態を検証し、タグから取得した現在バージョンをもとに新しいバージョンを算出して、ファイル更新、更新コマンドの実行、変更内容の検証を順に行います。検証後の変更一覧が空であっても（差分なしでも）準備処理を継続します。マージ時にリリース予定のバージョンは、準備 PR のブランチ名から取得します。
+- `services/packages.ts`: 対象となる `package.json` の内容を検証し、算出された共通バージョンを書き込んだ後、更新後のバージョンが正しく反映されたかを確認します。ファイルの検索・読み書きは `PackageFileStore` を通じて行います。
+- `infra/github.ts`: Octokit の `rest.git`、`rest.pulls`、`rest.repos` などの API 別メソッドを呼び出します。認証ヘッダーの付与、タイムアウト処理、ページネーション、および API レスポンスからドメイン契約型への変換を担います。
+- `infra/workspace.ts` および `infra/package-files.ts`: Git コマンド、Bash スクリプトの実行、ファイルシステムの操作を実装します。更新コマンド自体にタイムアウト制限は設けず、終了ステータスコードと出力サイズの上限（64 MiB）を検証します。Git の変更差分は、バイナリファイルや削除ファイルも含めて `FileChange` オブジェクトとして上位レイヤーに渡します。
+- `infra/action-input.ts`: publish モードの 3 つの入力パラメータ（`release-id`、`tag`、`commit`）を検証します。「3 つすべて省略（マージからの直接公開）」または「3 つすべて指定（既存ドラフトの公開）」のいずれかを受理し、中途半端な指定（一部のみ指定）はエラーとして拒否します。`src/index.ts` は全モード共通で設定ファイルを読み込んだ後、この判定結果に基づいて必要なイベント情報の取得や checkout 状態の検証を実行します。
+- `infra/action-event.ts`: GitHub Actions のイベント JSON からリポジトリのデフォルトブランチなどの情報を取得し、ユースケースで扱う `ReleaseEvent` 型に変換します。
+- `utils/version.ts`: `semver.parse`、`semver.gt`、`semver.inc` をラップして利用します。パース結果に対し、安定版 `X.Y.Z` のみを受け付ける制約を適用します。
+- `utils/version.ts` の `versionTags`: 接頭辞を除いた安定版バージョンを検証し、SemVer のメジャー・マイナー番号をもとに更新対象となる 2 つのタグ名（例: `v1`, `v1.2`）を生成します。
 
 ## 境界と検証
 
-Action のログ・エラーと生成する PR・コミットの文面は英語です。準備コミットの文面は `services/release-names.ts` で生成し、作成と既存ブランチの識別に共通で使います。
+Action のログメッセージ、エラーメッセージ、および自動生成される PR やコミットの文面はすべて英語で出力します。準備コミットのメッセージは `services/release-names.ts` で一元生成し、コミットの作成時だけでなく、既存ブランチが前回の準備コミットであるかを識別する際にも共通して使用します。
 
-設定・環境変数・Action 入力・イベント JSON・package.json は Valibot、バージョンは semver で検証します。Octokit の応答には SDK の型を使用し、スキーマによる再検証は行いません。コミット識別子は空でない文字列として扱い、形式の正規表現では検証しません。GitHub 固有のフィールド名は infra でアプリケーションの型に変換します。Git の参照先はリリース対象として扱える commit または tag に限定します。
+設定ファイル、環境変数、Action の入力パラメータ、イベント JSON、`package.json` は Valibot でバリデーションし、バージョン文字列は semver で検証します。Octokit のレスポンスには SDK 提供の TypeScript 型をそのまま利用し、スキーマによる二重のバリデーションは行いません。コミットハッシュなどの識別子は空文字でない文字列として扱い、正規表現等による厳密なハッシュ形式チェックは行いません。GitHub 固有のプロパティ名は、infra 層においてアプリケーション固有の型へとマッピングされます。Git の参照先は、リリース対象として扱える commit または tag のみに制限します。
 
-GitHub の各操作は Octokit の API 別メソッドを直接呼びます。通信のタイムアウトと応答本文を含めないエラーへの変換は Octokit の request hook に集約します。タグ・PR・リリース・アセットの一覧には API 別メソッドを渡した `octokit.paginate` を使い、各ページの応答を契約型へ変換します。
+GitHub API との通信では、Octokit の API 別メソッドを直接呼び出します。通信タイムアウトの設定や、レスポンス本文を含まない安全なエラーへの変換処理は、Octokit の request hook に集約しています。タグ、PR、リリース、アセットの一覧取得には `octokit.paginate` を用い、ページごとに取得したレスポンスを契約型へ変換します。
 
-ユースケースのテストはサービスの操作だけを差し替え、実行順序と失敗後の停止を検証します。サービスのテストはストレージやリポジトリの契約を差し替えて判定を確認します。infra のテストは Octokit の通信先や一時ファイルを使い、SDK・Git・ファイル境界を検証します。結合テストではこれらの層をつなぎ、準備 PR から公開までの動作を確認します。
+ユースケース層のユニットテストでは、サービス層の操作をモックに差し替え、処理の実行順序やエラー発生時の停止制御を検証します。サービス層のテストでは、リポジトリやファイルストアの契約インターフェースをモック化してビジネスロジックを検証します。infra 層のテストでは、通信スタブや一時ディレクトリを活用して、SDK、Git、ファイル境界との結合を検証します。結合テストではこれらのレイヤーを統合し、リリース準備 PR の作成から公開に至る一連のフローを確認します。
 
 ## 配布とジョブ間の連携
 
-アセット添付を行う構成では、draft と publish の間に利用側のビルド・アセット添付が入るため、`release-id`、`tag`、`commit` を明示的に受け渡します。publish は API 上の状態を再検証します。全ビルドの完了は利用側のステップ順序またはジョブ間の `needs` で制御し、共通 Action には Docker や各言語のビルド手順を組み込みません。
+アセット添付を伴う構成では、draft ジョブと publish ジョブの間にユーザー独自のビルド・アセット添付処理が挟まるため、ジョブ間で `release-id`、`tag`、`commit` を明示的に受け渡します。後続の publish 処理では、API 経由でリリースの最新状態を再検証します。すべてのビルド処理が完了したことの保証は、ワークフロー内のステップ順序やジョブ間の `needs` 依存関係によって利用側が制御し、本 Action 自体には Docker や特定言語向けのビルド手順を含めません。
 
-アセット添付を行わない構成では prepare → publish を使用できます。publish の3入力を省略し、準備 PR のマージコミットを checkout します。内部ではドラフト作成から公開まで連続して実行し、`ready` と `version` も出力します。必要なビルドや検証は publish の前に完了させます。
+アセット添付を行わない構成では、prepare → publish の最短フローを利用できます。この場合、publish ジョブの 3 つの入力を省略し、準備 PR のマージコミットを checkout して実行します。Action 内部でドラフトリリースの作成から公開までを一気通貫で実行し、`ready` や `version` などの出力も行います。必要なテストや静的解析などは、publish を実行する前のステップで完了させておく必要があります。
 
-`src/index.ts` は全モードの分岐前に、`config` 入力が指す設定ファイルを読み込み、`services/config.ts` のスキーマで検証します。publish は draft の有無にかかわらず、設定の `updateVersionTags` が有効なら `tagPrefix` をサービスへ渡し、無効ならタグ更新設定を渡しません。公開後のタグ更新で失敗しても、公開済み状態や更新済みタグは巻き戻しません。
+`src/index.ts` は、各モードの処理に分岐する前に、`config` 入力が示す設定ファイルを読み込み、`services/config.ts` で定義されたスキーマに従って検証します。publish 処理では、ドラフト経由であるかどうかにかかわらず、設定ファイルの `updateVersionTags` が有効であれば `tagPrefix` をサービス層に渡し、無効であればタグ更新処理を行いません。リリース公開後のメジャー・マイナータグ更新で万が一エラーが発生しても、すでに完了したリリースの公開や更新済みタグのロールバックは行いません。
 
-配布時は tsdown で実行時依存を `dist/index.mjs` に束ねます。`action.yml` はそのファイルを直接実行します。
+Action の配布形式として、tsdown を用いて実行時依存ライブラリを単一の `dist/index.mjs` にバンドルしています。`action.yml` はこのバンドル済みファイルを直接実行します。
 
-ローカルモジュールの import は拡張子を省略します。TypeScript は `moduleResolution: bundler` で解決し、実行用ファイルは tsdown でバンドルします。
+ソースコード内のローカルモジュールの import では拡張子を省略しています。TypeScript は `moduleResolution: bundler` でモジュールを解決し、配布用ファイルは tsdown によってバンドルされます。
 
-このリポジトリの `.github/workflows/release.yml` は `uses: ./` で自身の Action を実行します。prepare は共通 setup で依存関係を準備し、`.github/easy-release.json` に従ってバージョン更新と `pnpm format` を行います。準備 PR のマージ後はマージコミットを checkout し、リリース入力を省略した publish を実行して、タグ上の `action.yml` と `dist/index.mjs` を配布します。
+本リポジトリ自身の `.github/workflows/release.yml` では、`uses: ./` を用いて自身のアクションを実行しています。prepare ジョブでは共通 setup アクションにより依存関係をセットアップし、`.github/easy-release.json` の設定に従ってバージョン更新と `pnpm format` を実行します。準備 PR のマージ後はそのマージコミットを checkout し、リリース入力を省略した publish ジョブを実行することで、タグに含まれる `action.yml` と `dist/index.mjs` を成果物としてリリース・配布します。
 
-変更一覧が空の場合、`infra/github.ts` は blob と tree の作成を省略し、親コミットの tree をそのまま指定して準備コミットを作成します。ブランチと PR の作成は差分がある場合と同じ処理です。実際の Git リポジトリを使って空の変更一覧を検証し、HTTP 境界のテストで親の tree を使った空コミットから PR 作成までを確認します。
+変更ファイルが存在しない場合（差分なしの場合）、`infra/github.ts` は blob や tree の新規作成をスキップし、親コミットの tree をそのまま流用して空の準備コミットを作成します。ブランチや PR の作成フロー自体は、ファイル変更がある場合と全く同一です。実際の Git リポジトリを用いたテストで差分なしの挙動を担保するとともに、HTTP 境界のテストにおいて親 tree を流用した空コミット作成から PR 生成までの一連の動作を検証しています。
 
 ## CI
 
-`.github/actions/setup` は mise-action によるツールの自動インストールと pnpm の依存関係を準備する composite Action です。`ci` workflow は checkout 後にこの Action を呼び、format・lint・type-check・test・diff-check を独立したジョブで実行します。diff-check はビルドによる `dist` の差分を検出します。
+`.github/actions/setup` は、mise-action による各種ツールの自動セットアップと、pnpm による依存パッケージのインストールを行う composite Action です。`ci` ワークフローではリポジトリの checkout 後にこのセットアップを呼び出し、format・lint・type-check・test・diff-check の 5 つのジョブを並列で実行します。diff-check ジョブでは、コード生成やビルドによる `dist` ディレクトリのコミット漏れ・差分を検出します。
 
-stats-check は5ジョブを `needs` に指定し、`always()` で失敗・キャンセル・スキップも含む結果を確認します。すべてが success の場合に限り成功します。
+stats-check ジョブは上記 5 ジョブを `needs` に指定し、`always()` 条件を用いて失敗・キャンセル・スキップを含めた実行結果を集約・確認します。すべてのジョブが `success` である場合に限り、ステータスチェック全体を成功と判定します。
