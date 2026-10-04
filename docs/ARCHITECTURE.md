@@ -9,7 +9,7 @@
 | `infra`    | GitHub API・Git・ファイルシステム・GitHub Actions イベントとの接続                                                 | サービスが定義した契約、SDK、Node.js 組み込み API                            |
 | `utils`    | 副作用のないセマンティックバージョンのパース・比較・計算                                                           | `semver`                                                                     |
 
-`usecases` および `services` は、`infra` の具象クラスを直接 import しません。`services/definitions.ts` で定義されたインターフェース（`ReleaseRepository`、`Workspace`、`PackageFileStore`）を `infra` が実装することにより、依存関係逆転の原則（DIP）を適用しています。ESLint ルールにおいても、これら上位レイヤーから `infra`、Node.js 組み込み API、Octokit、Actions SDK を直接 import することを禁止しています。
+`usecases` および `services` は、`infra` の具象クラスを直接 import しません。`services/definitions.ts` で定義されたインターフェース（`ReleaseRepository`、`Workspace`、`PackageFileStore`）を `infra` が実装することにより、依存関係逆転の原則（DIP）を適用しています。Oxlint のルールにおいても、これら上位レイヤーから `infra`、Node.js 組み込み API、Octokit、Actions SDK を直接 import することを禁止しています。
 
 ## モジュールの役割
 
@@ -18,7 +18,7 @@
 - `usecases/publish.ts`: 既存ドラフトの公開処理をサービスに依頼します。準備 PR のマージから直接公開する場合は、draft のイベント判定・マージ検証・ドラフト作成処理を再利用し、その結果をもとに公開処理へ進みます。対象外の PR や途中で処理が失敗した場合は公開を行いません。各 usecase は必要なサービスの操作のみに依存し、REST API のパスや GitHub API のレスポンススキーマは意識しません。
 - `services/releases.ts`: リポジトリのタグ一覧から現在のバージョンを決定し、PR・タグ・リリースの状態判定を行います。変更コミットの作成を確認してから過去の準備 PR をクローズし、すべての添付アセットがアップロード済みであることを確認したうえでリリースを公開します。
 - メジャー・マイナータグの更新が有効な場合、`services/releases.ts` はリリース公開前にタグ名の形式を検証し、公開成功後にタグの存在確認と作成・更新を順次実行します。既存タグの参照先変更は `ReleaseRepository.updateTag` に委譲し、`infra/github.ts` が `rest.git.updateRef` を `force: true` で呼び出します。タグがまだ存在しない場合は、新規作成用の `createTag` を使用します。
-- `services/preparation.ts`: タグから取得した現在バージョンをもとに新しいバージョンを算出し、ブランチの checkout、ファイル更新、更新コマンドの実行、変更内容の検証を順に行います。検証後の変更一覧が空であっても（差分なしでも）準備処理を継続します。マージ時にリリース予定のバージョンは、準備 PR のブランチ名から取得します。
+- `services/preparation.ts`: checkout 済みの状態を検証し、タグから取得した現在バージョンをもとに新しいバージョンを算出して、ファイル更新、更新コマンドの実行、変更内容の検証を順に行います。検証後の変更一覧が空であっても（差分なしでも）準備処理を継続します。マージ時にリリース予定のバージョンは、準備 PR のブランチ名から取得します。
 - `services/packages.ts`: 対象となる `package.json` の内容を検証し、算出された共通バージョンを書き込んだ後、更新後のバージョンが正しく反映されたかを確認します。ファイルの検索・読み書きは `PackageFileStore` を通じて行います。
 - `infra/github.ts`: Octokit の `rest.git`、`rest.pulls`、`rest.repos` などの API 別メソッドを呼び出します。認証ヘッダーの付与、タイムアウト処理、ページネーション、および API レスポンスからドメイン契約型への変換を担います。
 - `infra/workspace.ts` および `infra/package-files.ts`: Git コマンド、Bash スクリプトの実行、ファイルシステムの操作を実装します。更新コマンド自体にタイムアウト制限は設けず、終了ステータスコードと出力サイズの上限（64 MiB）を検証します。Git の変更差分は、バイナリファイルや削除ファイルも含めて `FileChange` オブジェクトとして上位レイヤーに渡します。
