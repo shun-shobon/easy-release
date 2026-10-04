@@ -1,0 +1,39 @@
+{
+  "name": "easy-release",
+  "version": "0.1.0",
+  "private": true,
+  "description": "共通バージョンの準備 PR とドラフトリリースを管理する GitHub Action",
+  "license": "MIT",
+  "author": "NISHIZAWA Shuntaro <me@s2n.tech>",
+  "type": "module",
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsx src/index.ts",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@actions/core": "3.0.1",
+    "octokit": "5.0.5",
+    "semver": "7.8.5",
+    "valibot": "1.5.0"
+  },
+  "devDependencies": {
+    "@tsconfig/node-lts": "24.0.1",
+    "@tsconfig/strictest": "2.0.8",
+    "@types/node": "24.19.1",
+    "@types/semver": "7.8.0",
+    "oxfmt": "0.71.0",
+    "oxlint": "1.86.0",
+    "oxlint-tsgolint": "7.0.2003",
+    "tsdown": "0.23.0",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  },
+  "packageManager": "pnpm@12.8.1"
+}
