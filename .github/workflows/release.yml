@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: Version bump
+        required: true
+        type: choice
+        options: [patch, minor, major]
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: easy-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+      - uses: ./.github/actions/setup
+      - uses: ./
+        with:
+          mode: prepare
+          release-type: ${{ inputs.release_type }}
+
+  draft:
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      ready: ${{ steps.draft.outputs.ready }}
+      tag: ${{ steps.draft.outputs.tag }}
+      commit: ${{ steps.draft.outputs.commit }}
+      release-id: ${{ steps.draft.outputs.release-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+      - uses: ./
+        id: draft
+        with:
+          mode: draft
+
+  publish:
+    needs: draft
+    if: needs.draft.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.draft.outputs.commit }}
+      - uses: ./
+        with:
+          mode: publish
+          release-id: ${{ needs.draft.outputs.release-id }}
+          tag: ${{ needs.draft.outputs.tag }}
+          commit: ${{ needs.draft.outputs.commit }}
