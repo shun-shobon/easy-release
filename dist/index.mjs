@@ -24063,6 +24063,14 @@ var GitHub = class {
 		});
 		return toRelease(data);
 	}
+	async updateTag(tag, commit) {
+		await this.octokit.rest.git.updateRef({
+			...this.repository,
+			ref: `tags/${tag}`,
+			sha: commit,
+			force: true
+		});
+	}
 	listAssets(releaseId) {
 		return this.octokit.paginate(this.octokit.rest.repos.listReleaseAssets, {
 			...this.repository,
@@ -24297,6 +24305,7 @@ const nonempty = /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ 
 const configSchema = /* @__PURE__ */ strictObject({
 	packageFiles: /* @__PURE__ */ array(nonempty),
 	tagPrefix: /* @__PURE__ */ optional(/* @__PURE__ */ string(), "v"),
+	updateVersionTags: /* @__PURE__ */ optional(/* @__PURE__ */ boolean(), false),
 	branchPrefix: /* @__PURE__ */ optional(nonempty, "release/prepare-"),
 	updateCommand: /* @__PURE__ */ optional(nonempty)
 });
@@ -25698,6 +25707,12 @@ var import_semver = (/* @__PURE__ */ __commonJSMin(((exports, module) => {
 		rcompareIdentifiers: identifiers.rcompareIdentifiers
 	};
 })))();
+function versionTags(tag, prefix) {
+	if (!tag.startsWith(prefix)) throw new Error("The release tag does not match the tag prefix.");
+	const version = tag.slice(prefix.length);
+	assertStableVersion(version);
+	return [`${prefix}${(0, import_semver.major)(version)}`, `${prefix}${(0, import_semver.major)(version)}.${(0, import_semver.minor)(version)}`];
+}
 function isStableVersion(version) {
 	const parsed = (0, import_semver.parse)(version);
 	return parsed !== null && parsed.version === version && parsed.prerelease.length === 0 && parsed.build.length === 0;
@@ -25908,6 +25923,7 @@ var ReleaseService = class {
 		return result(release, tag, commit);
 	}
 	async publish(input) {
+		const tags = input.versionTags ? versionTags(input.tag, input.versionTags.prefix) : [];
 		const release = await this.repository.getRelease(input.releaseId);
 		if (!release.draft) throw new Error("This release is already published.");
 		if (release.tag !== input.tag) throw new Error("The release tag does not match.");
@@ -25915,6 +25931,8 @@ var ReleaseService = class {
 		if ((await this.repository.listAssets(input.releaseId)).some((asset) => asset.state !== "uploaded")) throw new Error("Asset uploads are incomplete.");
 		const published = await this.repository.publishRelease(input.releaseId);
 		if (published.draft || published.tag !== input.tag || published.id !== input.releaseId) throw new Error("The published release does not match the expected state, tag, or ID.");
+		for (const tag of tags) if (await this.repository.getTag(tag)) await this.repository.updateTag(tag, input.commit);
+		else await this.repository.createTag(tag, input.commit);
 		return result(published, input.tag, input.commit);
 	}
 };
@@ -25968,30 +25986,31 @@ async function main() {
 	]), getInput("mode", { required: true }));
 	const token = getInput("token", { required: true });
 	setSecret(token);
+	const nonempty = /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ minLength(1));
 	const environment = parse$3(/* @__PURE__ */ object({
 		GITHUB_API_URL: /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ url()),
-		GITHUB_REPOSITORY: /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ regex$2(/^[\w.-]+\/[\w.-]+$/))
+		GITHUB_REPOSITORY: /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ regex$2(/^[\w.-]+\/[\w.-]+$/)),
+		GITHUB_WORKSPACE: nonempty
 	}), process.env);
 	const releases = new ReleaseService(new GitHub(environment.GITHUB_API_URL, environment.GITHUB_REPOSITORY, token));
+	const root = resolve(environment.GITHUB_WORKSPACE);
+	const configPath = resolve(root, getInput("config", { required: true }));
+	const configSource = await readFile(configPath, "utf8");
+	const config = parse$3(configSchema, JSON.parse(configSource));
 	let outputs;
 	if (mode === "publish") outputs = await publish(releases, {
 		releaseId: parse$3(/* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ transform(Number), /* @__PURE__ */ number(), /* @__PURE__ */ safeInteger(), /* @__PURE__ */ minValue(1)), getInput("release-id", { required: true })),
 		tag: getInput("tag", { required: true }),
-		commit: getInput("commit", { required: true })
+		commit: getInput("commit", { required: true }),
+		versionTags: config.updateVersionTags ? { prefix: config.tagPrefix } : void 0
 	});
 	else {
-		const nonempty = /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ minLength(1));
 		const checkout = parse$3(/* @__PURE__ */ object({
-			GITHUB_WORKSPACE: nonempty,
 			GITHUB_EVENT_NAME: nonempty,
 			GITHUB_EVENT_PATH: nonempty,
 			GITHUB_SHA: nonempty,
 			GITHUB_REF: nonempty
 		}), process.env);
-		const root = resolve(checkout.GITHUB_WORKSPACE);
-		const configPath = resolve(root, getInput("config", { required: true }));
-		const configSource = await readFile(configPath, "utf8");
-		const config = parse$3(configSchema, JSON.parse(configSource));
 		const eventSource = await readFile(checkout.GITHUB_EVENT_PATH, "utf8");
 		const event = JSON.parse(eventSource);
 		const context = {

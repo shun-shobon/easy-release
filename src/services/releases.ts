@@ -1,10 +1,15 @@
-import { latestVersion } from "../utils/version";
+import { latestVersion, versionTags } from "../utils/version";
 
 import type { Config } from "./config";
 import type { FileChange, Release, ReleaseRepository } from "./definitions";
 import { managedBranch, preparationMessage } from "./release-names";
 
-export type PublishInput = { releaseId: number; tag: string; commit: string };
+export type PublishInput = {
+  releaseId: number;
+  tag: string;
+  commit: string;
+  versionTags?: { prefix: string };
+};
 export type PreparationInput = {
   config: Config;
   repository: string;
@@ -136,6 +141,7 @@ export class ReleaseService {
   }
 
   async publish(input: PublishInput) {
+    const tags = input.versionTags ? versionTags(input.tag, input.versionTags.prefix) : [];
     const release = await this.repository.getRelease(input.releaseId);
 
     if (!release.draft) {
@@ -160,6 +166,14 @@ export class ReleaseService {
 
     if (published.draft || published.tag !== input.tag || published.id !== input.releaseId) {
       throw new Error("The published release does not match the expected state, tag, or ID.");
+    }
+
+    for (const tag of tags) {
+      if (await this.repository.getTag(tag)) {
+        await this.repository.updateTag(tag, input.commit);
+      } else {
+        await this.repository.createTag(tag, input.commit);
+      }
     }
 
     return result(published, input.tag, input.commit);

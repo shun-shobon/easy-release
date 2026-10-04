@@ -1,6 +1,17 @@
-import { gt, inc, parse } from "semver";
+import { gt, inc, major, minor, parse } from "semver";
 
 export type ReleaseType = "major" | "minor" | "patch";
+
+export function versionTags(tag: string, prefix: string): string[] {
+  if (!tag.startsWith(prefix)) {
+    throw new Error("The release tag does not match the tag prefix.");
+  }
+
+  const version = tag.slice(prefix.length);
+  assertStableVersion(version);
+
+  return [`${prefix}${major(version)}`, `${prefix}${major(version)}.${minor(version)}`];
+}
 
 export function isStableVersion(version: string): boolean {
   const parsed = parse(version);

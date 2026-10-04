@@ -10,7 +10,7 @@ import { assertCheckout, collectChanges, runUpdateCommand, validateRefs } from "
 import { configSchema, type Config } from "../services/config";
 import { PackageService } from "../services/packages";
 import { PreparationService } from "../services/preparation";
-import { ReleaseService } from "../services/releases";
+import { ReleaseService, type PublishInput } from "../services/releases";
 import { draft as executeDraft } from "../usecases/draft";
 import { prepare as executePrepare } from "../usecases/prepare";
 import { publish as executePublish } from "../usecases/publish";
@@ -69,7 +69,7 @@ async function draft(config: Config, context: FixtureContext, github: GitHub) {
   );
 }
 
-function publish(github: GitHub, input: { releaseId: number; tag: string; commit: string }) {
+function publish(github: GitHub, input: PublishInput) {
   return executePublish(new ReleaseService(github), input);
 }
 
@@ -116,6 +116,7 @@ describe("config", () => {
     expect(config).toMatchObject({
       tagPrefix: "v",
       branchPrefix: "release/prepare-",
+      updateVersionTags: false,
     });
   });
 
@@ -185,6 +186,72 @@ describe("draft eligibility", () => {
 });
 
 describe("publish", () => {
+  it.each([{ object: { type: "tree", sha } }, new Response(null, { status: 403 })])(
+    "stops on an invalid or inaccessible version tag",
+    async (response) => {
+      const { github, calls } = client([
+        release,
+        { object: { type: "commit", sha } },
+        [],
+        { ...release, draft: false },
+        response,
+      ]);
+
+      await expect(
+        publish(github, {
+          releaseId: 9,
+          tag: release.tag_name,
+          commit: sha,
+          versionTags: { prefix: "v" },
+        }),
+      ).rejects.toThrow();
+
+      expect(calls.at(-1)?.path).toBe("https://api.github.com/repos/o/r/git/ref/tags/v1");
+      expect(calls.filter((call) => call.method !== "GET")).toHaveLength(1);
+    },
+  );
+
+  it("publishes before moving the major tag and creating the minor tag", async () => {
+    const reference = { object: { type: "commit", sha } };
+    const { github, calls } = client([
+      release,
+      reference,
+      [],
+      { ...release, draft: false },
+      { object: { type: "tag", sha: "old" } },
+      reference,
+      new Response(null, { status: 404 }),
+      reference,
+    ]);
+
+    await expect(
+      publish(github, {
+        releaseId: 9,
+        tag: release.tag_name,
+        commit: sha,
+        versionTags: { prefix: "v" },
+      }),
+    ).resolves.toMatchObject({ releaseId: 9 });
+
+    expect(calls.filter((call) => call.method !== "GET")).toEqual([
+      {
+        method: "PATCH",
+        path: "https://api.github.com/repos/o/r/releases/9",
+        body: { draft: false, make_latest: "true" },
+      },
+      {
+        method: "PATCH",
+        path: "https://api.github.com/repos/o/r/git/refs/tags/v1",
+        body: { sha, force: true },
+      },
+      {
+        method: "POST",
+        path: "https://api.github.com/repos/o/r/git/refs",
+        body: { ref: "refs/tags/v1.2", sha },
+      },
+    ]);
+  });
+
   it("publishes only after checking the release, tag commit, and uploaded assets", async () => {
     const { github, calls } = client([
       release,

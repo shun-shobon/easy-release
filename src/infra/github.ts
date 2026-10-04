@@ -257,6 +257,15 @@ export class GitHub implements ReleaseRepository {
     return toRelease(data);
   }
 
+  async updateTag(tag: string, commit: string): Promise<void> {
+    await this.octokit.rest.git.updateRef({
+      ...this.repository,
+      ref: `tags/${tag}`,
+      sha: commit,
+      force: true,
+    });
+  }
+
   listAssets(releaseId: number) {
     return this.octokit.paginate(
       this.octokit.rest.repos.listReleaseAssets,

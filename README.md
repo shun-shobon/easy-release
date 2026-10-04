@@ -21,12 +21,13 @@ Changesets や release-please よりも、もっと手軽なリリースを目�
 }
 ```
 
-| 設定            | 既定値             | 内容                                                                         |
-| --------------- | ------------------ | ---------------------------------------------------------------------------- |
-| `packageFiles`  | 必須               | 更新する `package.json` の配列。`packages/*/package.json` などの glob に対応 |
-| `tagPrefix`     | `v`                | リリースタグの接頭辞                                                         |
-| `branchPrefix`  | `release/prepare-` | 準備 PR のブランチ接頭辞                                                     |
-| `updateCommand` | なし               | バージョン更新後に実行する Bash コマンド                                     |
+| 設定                | 既定値             | 内容                                                                         |
+| ------------------- | ------------------ | ---------------------------------------------------------------------------- |
+| `packageFiles`      | 必須               | 更新する `package.json` の配列。`packages/*/package.json` などの glob に対応 |
+| `tagPrefix`         | `v`                | リリースタグの接頭辞                                                         |
+| `updateVersionTags` | `false`            | 公開成功後にメジャー・マイナータグを両方更新する                             |
+| `branchPrefix`      | `release/prepare-` | 準備 PR のブランチ接頭辞                                                     |
+| `updateCommand`     | なし               | バージョン更新後に実行する Bash コマンド                                     |
 
 現在のバージョンは Git タグの最大の安定版から取得し、タグがなければ `0.0.0` を基準にします。対象パッケージはすべて同じ版に更新します。
 
@@ -120,6 +121,9 @@ jobs:
     if: needs.draft.outputs.ready == 'true'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.draft.outputs.commit }}
       - uses: shun-shobon/easy-release@v0.1.0
         with:
           mode: publish
@@ -130,17 +134,32 @@ jobs:
 
 [この例をコピー](examples/release.yml)して使えます。`assets` のビルドコマンドと成果物のパスはプロジェクトに合わせて変更してください。Docker ビルドなどを別ジョブにする場合は、`publish.needs` にそのジョブを追加します。
 
+### メジャー・マイナータグの更新
+
+設定ファイル `.github/easy-release.json` に `updateVersionTags: true` を追加すると、公開成功後にメジャー・マイナーのタグを更新します。たとえば `v1.2.3` の公開時は、`v1` と `v1.2` を同じコミットへ移動し、存在しなければ作成します。既定では無効です。
+
+```json
+{
+  "packageFiles": ["package.json"],
+  "updateVersionTags": true
+}
+```
+
+タグの接頭辞には同じ設定ファイルの `tagPrefix` を使います。`app/v` なら `app/v1` と `app/v1.2`、空文字なら `1` と `1.2` を更新します。設定ファイルのパスを変更した場合は、全モードで同じ `config` 入力を指定します。
+
+更新先は今回公開するコミットです。古い版を公開した場合もそのコミットへ移動します。途中で失敗すると公開済みリリースと更新済みタグは残ります。公開済みリリースへの publish 再実行は拒否されるため、未完了のタグ更新は手動で行ってください。
+
 ## 入力
 
-| 名前           | 使用モード      | 内容                                                     |
-| -------------- | --------------- | -------------------------------------------------------- |
-| `mode`         | 共通            | 必須。`prepare` / `draft` / `publish`                    |
-| `token`        | 共通            | GitHub トークン。既定値は `${{ github.token }}`          |
-| `config`       | prepare / draft | 設定ファイルのパス。既定値は `.github/easy-release.json` |
-| `release-type` | prepare         | 必須。`major` / `minor` / `patch`                        |
-| `release-id`   | publish         | 必須。draft が出力した `release-id`                      |
-| `tag`          | publish         | 必須。draft が出力した `tag`                             |
-| `commit`       | publish         | 必須。draft が出力した `commit`                          |
+| 名前           | 使用モード | 内容                                                     |
+| -------------- | ---------- | -------------------------------------------------------- |
+| `mode`         | 共通       | 必須。`prepare` / `draft` / `publish`                    |
+| `token`        | 共通       | GitHub トークン。既定値は `${{ github.token }}`          |
+| `config`       | 共通       | 設定ファイルのパス。既定値は `.github/easy-release.json` |
+| `release-type` | prepare    | 必須。`major` / `minor` / `patch`                        |
+| `release-id`   | publish    | 必須。draft が出力した `release-id`                      |
+| `tag`          | publish    | 必須。draft が出力した `tag`                             |
+| `commit`       | publish    | 必須。draft が出力した `commit`                          |
 
 トークンには `contents: write`、prepare では加えて `pull-requests: write` が必要です。
 
