@@ -1,6 +1,6 @@
 {
   "name": "easy-release",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "共通バージョンの準備 PR とドラフトリリースを管理する GitHub Action",
   "license": "MIT",
