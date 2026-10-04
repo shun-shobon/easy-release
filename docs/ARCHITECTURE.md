@@ -49,7 +49,7 @@ GitHub の各操作は Octokit の API 別メソッドを直接呼びます。�
 
 ローカルモジュールの import は拡張子を省略します。TypeScript は `moduleResolution: bundler` で解決し、実行用ファイルは tsdown でバンドルします。
 
-このリポジトリの `.github/workflows/release.yml` は `uses: ./` で自身の Action を実行します。prepare は共通 setup で依存関係を準備し、`.github/easy-release.json` に従ってバージョン更新と `pnpm format` を行います。準備 PR のマージ後は draft、publish を別ジョブで実行し、タグ上の `action.yml` と `dist/index.mjs` を配布します。
+このリポジトリの `.github/workflows/release.yml` は `uses: ./` で自身の Action を実行します。prepare は共通 setup で依存関係を準備し、`.github/easy-release.json` に従ってバージョン更新と `pnpm format` を行います。準備 PR のマージ後はマージコミットを checkout し、リリース入力を省略した publish を実行して、タグ上の `action.yml` と `dist/index.mjs` を配布します。
 
 変更一覧が空の場合、`infra/github.ts` は blob と tree の作成を省略し、親コミットの tree をそのまま指定して準備コミットを作成します。ブランチと PR の作成は差分がある場合と同じ処理です。実際の Git リポジトリを使って空の変更一覧を検証し、HTTP 境界のテストで親の tree を使った空コミットから PR 作成までを確認します。
 
