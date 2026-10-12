@@ -1,35 +1,17 @@
-import * as v from "valibot";
-
-import { assertStableVersion } from "../utils/version";
-
 import type { PackageFileStore } from "./definitions";
-
-const packageSchema = v.record(v.string(), v.unknown());
-
-function serializePackage(source: string, data: Record<string, unknown>): string {
-  const indentation = /^[\t ]+(?=")/mu.exec(source)?.[0];
-  const newline = source.includes("\r\n") ? "\r\n" : "\n";
-  const trailingWhitespace = source.slice(source.trimEnd().length);
-  const serialized = JSON.stringify(data, null, indentation);
-
-  return serialized.replaceAll("\n", newline) + trailingWhitespace;
-}
+import { packageFormat } from "./package-formats";
 
 export class PackageService {
   constructor(private readonly store: PackageFileStore) {}
 
   private async readPackage(file: string) {
     const source = await this.store.read(file);
+    const format = packageFormat(file);
 
     try {
-      const value: unknown = JSON.parse(source);
-      const data = v.parse(packageSchema, value);
-      const version = v.parse(v.string(), data["version"]);
-      assertStableVersion(version);
-
-      return { file, source, data, version };
+      return { file, source, format, versions: format.versions(source) };
     } catch (cause) {
-      throw new Error(`Invalid package version or JSON: ${file}`, { cause });
+      throw new Error(`Invalid package file: ${file}`, { cause });
     }
   }
 
@@ -40,10 +22,16 @@ export class PackageService {
   async update(packageFiles: string[], version: string): Promise<string[]> {
     const files = await this.store.resolve(packageFiles);
     const packages = await Promise.all(files.map((file) => this.readPackage(file)));
+    const contents = packages.map((pkg) => {
+      try {
+        return { file: pkg.file, content: pkg.format.update(pkg.source, version) };
+      } catch (cause) {
+        throw new Error(`Cannot update package version: ${pkg.file}`, { cause });
+      }
+    });
 
-    for (const pkg of packages) {
-      pkg.data["version"] = version;
-      await this.store.write(pkg.file, serializePackage(pkg.source, pkg.data));
+    for (const { file, content } of contents) {
+      await this.store.write(file, content);
     }
 
     return files;
@@ -51,10 +39,10 @@ export class PackageService {
 
   async verify(files: string[], version: string): Promise<void> {
     for (const file of files) {
-      const actual = (await this.readPackage(file)).version;
-
-      if (actual !== version) {
-        throw new Error(`Package version differs from ${version}: ${file} (${actual})`);
+      for (const actual of (await this.readPackage(file)).versions) {
+        if (actual !== version) {
+          throw new Error(`Package version differs from ${version}: ${file} (${actual})`);
+        }
       }
     }
   }

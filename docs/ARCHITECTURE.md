@@ -19,7 +19,8 @@
 - `usecases/publish.ts`: draft の判定・検証・ドラフト作成を再利用し、その結果をもとに公開処理へ進みます。
 - `services/release-names.ts`: タグ名・準備ブランチ名・準備コミットメッセージの生成と、準備ブランチ名からのバージョン抽出を一元化します。準備コミットメッセージは、既存ブランチが前回の準備コミットであるかの識別にも使用します。
 - `services/preparation.ts`: checkout 済みの作業ツリーに対する準備処理（バージョン算出と ref 検証、ファイル更新・更新コマンド実行・変更収集）と、マージ時点のパッケージ検証を担います。
-- `services/packages.ts`: 対象ファイルの JSON とバージョンを検証し、共通バージョンを書き込みます。ファイルの検索・読み書きは `PackageFileStore` を通じて行います。
+- `services/packages.ts`: 対象ファイルのバージョンを検証し、全ファイルの書き換え内容を確定してから共通バージョンを書き込みます。ファイルの検索・読み書きは `PackageFileStore` を通じて行います。
+- `services/package-formats.ts`: ファイル名から JSON / Cargo マニフェストの形式を選び、形式ごとのバージョン読み取りと書き換えを実装します。Cargo マニフェストは `toml-eslint-parser` で位置情報付きの AST に変換し、キーパスで特定した `version` の値ノードの範囲だけを置換します。
 - `services/releases.ts`: タグ一覧から現在のバージョンを決定し、PR・タグ・リリースの状態判定と作成・公開を行います。メジャー・マイナータグの更新では、既存タグは `ReleaseRepository.updateTag`（`rest.git.updateRef` を `force: true` で呼び出し）、未作成のタグは `createTag` を使用します。
 - `infra/github.ts`: Octokit の API 別メソッドを呼び出し、レスポンスをドメイン契約型へ変換します。
 - `infra/workspace.ts`: `GitWorkspace` が Git コマンドと Bash による更新コマンドの実行を実装します。変更差分は `git diff --cached --raw` の 1 回の呼び出しから旧・新ファイルモードとステータスを取得し、`FileChange` に変換します。
@@ -31,7 +32,7 @@
 
 ## 境界と検証
 
-設定ファイル、環境変数、Action の入力パラメータ、イベント JSON、`package.json` は Valibot でバリデーションし、バージョン文字列は semver で検証します。Octokit のレスポンスには SDK 提供の TypeScript 型をそのまま利用し、スキーマによる再検証や、リクエストした値がそのまま返却されたかの照合は行いません。GitHub 固有のプロパティ名は、infra 層においてアプリケーション固有の型へとマッピングされます。
+設定ファイル、環境変数、Action の入力パラメータ、イベント JSON、パッケージファイルは Valibot でバリデーションし、バージョン文字列は semver で検証します。Octokit のレスポンスには SDK 提供の TypeScript 型をそのまま利用し、スキーマによる再検証や、リクエストした値がそのまま返却されたかの照合は行いません。GitHub 固有のプロパティ名は、infra 層においてアプリケーション固有の型へとマッピングされます。
 
 通信タイムアウトの設定や、レスポンス本文を含まない安全なエラーへの変換処理は、Octokit の request hook に集約しています。一覧取得には `octokit.paginate` を用います。
 
