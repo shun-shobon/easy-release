@@ -8,14 +8,15 @@ import { parseDefaultBranch, parseReleaseEvent } from "./infra/action-event";
 import { parsePublishInput } from "./infra/action-input";
 import { GitHub } from "./infra/github";
 import { FileSystemPackages } from "./infra/package-files";
-import { createWorkspace } from "./infra/workspace";
+import { GitWorkspace } from "./infra/workspace";
 import { configSchema } from "./services/config";
 import { PackageService } from "./services/packages";
 import { PreparationService } from "./services/preparation";
 import { ReleaseService } from "./services/releases";
 import { draft } from "./usecases/draft";
 import { prepare } from "./usecases/prepare";
-import { publish, publishMerged } from "./usecases/publish";
+import { publishMerged } from "./usecases/publish";
+import { nonempty } from "./utils/schema";
 
 async function main() {
   const mode = v.parse(
@@ -26,16 +27,21 @@ async function main() {
   const token = getInput("token", { required: true });
   setSecret(token);
 
-  const nonempty = v.pipe(v.string(), v.minLength(1));
+  const segment = v.pipe(v.string(), v.regex(/^[\w.-]+$/));
   const environment = v.parse(
     v.object({
       GITHUB_API_URL: v.pipe(v.string(), v.url()),
-      GITHUB_REPOSITORY: v.pipe(v.string(), v.regex(/^[\w.-]+\/[\w.-]+$/)),
+      GITHUB_REPOSITORY: v.pipe(
+        v.string(),
+        v.transform((value) => value.split("/")),
+        v.strictTuple([segment, segment]),
+      ),
       GITHUB_WORKSPACE: nonempty,
     }),
     process.env,
   );
-  const github = new GitHub(environment.GITHUB_API_URL, environment.GITHUB_REPOSITORY, token);
+  const [owner, repo] = environment.GITHUB_REPOSITORY;
+  const github = new GitHub(environment.GITHUB_API_URL, { owner, repo }, token);
   const releases = new ReleaseService(github);
 
   const root = resolve(environment.GITHUB_WORKSPACE);
@@ -50,7 +56,7 @@ async function main() {
       : undefined;
 
   if (publishInput) {
-    outputs = await publish(releases, {
+    outputs = await releases.publish({
       ...publishInput,
       versionTags: config.updateVersionTags ? { prefix: config.tagPrefix } : undefined,
     });
@@ -69,7 +75,7 @@ async function main() {
     const event: unknown = JSON.parse(eventSource);
 
     const context = {
-      repository: environment.GITHUB_REPOSITORY,
+      repository: `${owner}/${repo}`,
       defaultBranch: parseDefaultBranch(event),
       event: parseReleaseEvent(checkout.GITHUB_EVENT_NAME, event),
       sha: checkout.GITHUB_SHA,
@@ -77,7 +83,7 @@ async function main() {
     };
 
     const packages = new PackageService(new FileSystemPackages(root));
-    const preparation = new PreparationService(createWorkspace(root), packages);
+    const preparation = new PreparationService(new GitWorkspace(root), packages);
     const services = { preparation, releases };
 
     if (mode === "prepare") {

@@ -1,13 +1,13 @@
-import { assertStableVersion, bumpVersion, type ReleaseType } from "../utils/version";
+import { bumpVersion, type ReleaseType } from "../utils/version";
 
 import type { Config } from "./config";
-import type { Workspace } from "./definitions";
+import type { FileChange, Workspace } from "./definitions";
 import type { PackageService } from "./packages";
+import { releaseNames } from "./release-names";
 
-export type VersionUpdate = {
+export type PreparationPlan = {
   previousVersion: string;
   version: string;
-  files: string[];
   tag: string;
   branch: string;
 };
@@ -18,56 +18,41 @@ export class PreparationService {
     private readonly packages: PackageService,
   ) {}
 
-  assertCheckout(commit: string): Promise<void> {
-    return this.workspace.assertCheckout(commit);
-  }
-
-  async updateVersions(
+  async plan(
     config: Config,
+    commit: string,
     previousVersion: string,
     type: ReleaseType,
-  ): Promise<VersionUpdate> {
-    const version = bumpVersion(previousVersion, type);
-    const tag = config.tagPrefix + version;
-    const branch = config.branchPrefix + tag;
+  ): Promise<PreparationPlan> {
+    await this.workspace.assertCheckout(commit);
 
+    const version = bumpVersion(previousVersion, type);
+    const { tag, branch } = releaseNames(config, version);
     await this.workspace.validateRefs([`refs/tags/${tag}`, `refs/heads/${branch}`]);
 
-    const updated = await this.packages.update(config.packageFiles, version);
-
-    return { ...updated, previousVersion, tag, branch };
+    return { previousVersion, version, tag, branch };
   }
 
-  async finish(config: Config, updated: VersionUpdate) {
+  async apply(config: Config, plan: PreparationPlan): Promise<FileChange[]> {
+    const files = await this.packages.update(config.packageFiles, plan.version);
+
     if (config.updateCommand) {
       await this.workspace.runUpdateCommand(
         config.updateCommand,
-        updated.previousVersion,
-        updated.version,
+        plan.previousVersion,
+        plan.version,
       );
     }
 
-    await this.packages.verify(updated.files, updated.version);
+    await this.packages.verify(files, plan.version);
 
     return this.workspace.collectChanges();
   }
 
-  async verifyMerged(config: Config, commit: string, branch: string) {
+  async verifyMerged(config: Config, commit: string, version: string): Promise<void> {
     await this.workspace.assertCheckout(commit);
-    const prefix = config.branchPrefix + config.tagPrefix;
 
-    if (!branch.startsWith(prefix)) {
-      throw new Error("Not a release preparation branch.");
-    }
-
-    const version = branch.slice(prefix.length);
-    assertStableVersion(version);
-    const tag = config.tagPrefix + version;
     const files = await this.packages.resolveFiles(config.packageFiles);
     await this.packages.verify(files, version);
-
-    await this.workspace.validateRefs([`refs/tags/${tag}`, `refs/heads/${branch}`]);
-
-    return { version, tag };
   }
 }

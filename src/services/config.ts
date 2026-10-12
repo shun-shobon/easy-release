@@ -1,6 +1,6 @@
 import * as v from "valibot";
 
-const nonempty = v.pipe(v.string(), v.minLength(1));
+import { nonempty } from "../utils/schema";
 
 export const configSchema = v.strictObject({
   packageFiles: v.array(nonempty),

@@ -26,9 +26,10 @@ describe("PackageService", () => {
     const files = store({ "a.json": '{"version":"1.2.3"}', "b.json": '{"version":"1.2.3"}' });
     const service = new PackageService(files);
 
-    await expect(service.update(["a.json", "b.json"], "1.3.0")).resolves.toMatchObject({
-      version: "1.3.0",
-    });
+    await expect(service.update(["a.json", "b.json"], "1.3.0")).resolves.toEqual([
+      "a.json",
+      "b.json",
+    ]);
     expect(files.write).toHaveBeenCalledWith("a.json", '{"version":"1.3.0"}');
     expect(files.write).toHaveBeenCalledWith("b.json", '{"version":"1.3.0"}');
   });

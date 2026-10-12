@@ -45,7 +45,7 @@ jobs:
       - run: pnpm run build
       - run: git diff --exit-code -- dist
 
-  stats-check:
+  status-check:
     if: always()
     needs: [format, lint, type-check, test, diff-check]
     runs-on: ubuntu-latest

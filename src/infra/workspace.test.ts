@@ -16,7 +16,7 @@ import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { assertCheckout, collectChanges, runUpdateCommand, validateRefs } from "./workspace";
+import { GitWorkspace } from "./workspace";
 
 const execute = promisify(execFile);
 const directories: string[] = [];
@@ -70,13 +70,13 @@ describe("assertCheckout", () => {
   it("accepts the clean repository at the requested commit", async () => {
     const { root, sha } = await fixture();
 
-    await expect(assertCheckout(root, sha)).resolves.toBeUndefined();
+    await expect(new GitWorkspace(root).assertCheckout(sha)).resolves.toBeUndefined();
   });
 
   it("rejects another HEAD", async () => {
     const { root } = await fixture();
 
-    await expect(assertCheckout(root, "0".repeat(40))).rejects.toThrow(/HEAD/);
+    await expect(new GitWorkspace(root).assertCheckout("0".repeat(40))).rejects.toThrow(/HEAD/);
   });
 
   it("rejects a subdirectory of the checkout", async () => {
@@ -84,7 +84,7 @@ describe("assertCheckout", () => {
     const nested = join(root, "nested");
     await mkdir(nested);
 
-    await expect(assertCheckout(nested, sha)).rejects.toThrow(/root/);
+    await expect(new GitWorkspace(nested).assertCheckout(sha)).rejects.toThrow(/root/);
   });
 
   it.each(["tracked", "untracked", "staged"])("rejects %s changes", async (kind) => {
@@ -94,15 +94,14 @@ describe("assertCheckout", () => {
       await git(root, "add", "--all");
     }
 
-    await expect(assertCheckout(root, sha)).rejects.toThrow(/clean/);
+    await expect(new GitWorkspace(root).assertCheckout(sha)).rejects.toThrow(/clean/);
   });
 });
 
 describe("runUpdateCommand", () => {
   it("passes both versions and runs in the checkout", async () => {
     const { root } = await fixture();
-    await runUpdateCommand(
-      root,
+    await new GitWorkspace(root).runUpdateCommand(
       'printf "%s:%s" "$PREVIOUS_VERSION" "$RELEASE_VERSION" > versions.txt',
       "1.2.3",
       "2.0.0",
@@ -115,7 +114,9 @@ describe("runUpdateCommand", () => {
     async (command) => {
       const { root } = await fixture();
 
-      await expect(runUpdateCommand(root, command, "1.0.0", "1.0.1")).rejects.toThrow();
+      await expect(
+        new GitWorkspace(root).runUpdateCommand(command, "1.0.0", "1.0.1"),
+      ).rejects.toThrow();
       await expect(readFile(join(root, "should-not-exist"))).rejects.toThrow();
     },
   );
@@ -124,8 +125,7 @@ describe("runUpdateCommand", () => {
     const { root } = await fixture();
 
     await expect(
-      runUpdateCommand(
-        root,
+      new GitWorkspace(root).runUpdateCommand(
         "bash -c 'sleep 0.3; printf leaked > leaked.txt' & exit 7",
         "1.0.0",
         "1.0.1",
@@ -139,9 +139,9 @@ describe("runUpdateCommand", () => {
   it("reports process startup errors", async () => {
     const { root } = await fixture();
 
-    await expect(runUpdateCommand(join(root, "missing"), "true", "1.0.0", "1.0.1")).rejects.toThrow(
-      /ENOENT/,
-    );
+    await expect(
+      new GitWorkspace(join(root, "missing")).runUpdateCommand("true", "1.0.0", "1.0.1"),
+    ).rejects.toThrow(/ENOENT/);
   });
 });
 
@@ -150,7 +150,10 @@ describe("validateRefs", () => {
     const { root } = await fixture();
 
     await expect(
-      validateRefs(root, ["refs/heads/release/prepare-v1.0.0", "refs/tags/project/v1.0.0"]),
+      new GitWorkspace(root).validateRefs([
+        "refs/heads/release/prepare-v1.0.0",
+        "refs/tags/project/v1.0.0",
+      ]),
     ).resolves.toBeUndefined();
   });
 
@@ -163,7 +166,7 @@ describe("validateRefs", () => {
   ])("rejects an invalid ref: %s", async (ref) => {
     const { root } = await fixture();
 
-    await expect(validateRefs(root, [ref])).rejects.toThrow();
+    await expect(new GitWorkspace(root).validateRefs([ref])).rejects.toThrow();
   });
 });
 
@@ -181,7 +184,7 @@ describe("collectChanges", () => {
     await rm(join(root, ".gitignore"));
     // Keep the ignore rule local while deleting the tracked file.
     await writeFile(join(root, ".git", "info", "exclude"), "ignored.txt\n");
-    const changes = await collectChanges(root);
+    const changes = await new GitWorkspace(root).collectChanges();
     expect(changes).toEqual([
       { path: ".gitignore", mode: "100644", content: null },
       { path: "binary space.bin", mode: "100644", content: binary },
@@ -192,9 +195,24 @@ describe("collectChanges", () => {
     ]);
   });
 
+  it("collects type and mode changes of tracked files", async () => {
+    const { root } = await fixture();
+    await writeFile(join(root, "target.txt"), "target");
+    await writeFile(join(root, "run.sh"), "#!/bin/sh\n");
+    await commit(root);
+    await rm(join(root, "file.txt"));
+    await symlink("target.txt", join(root, "file.txt"));
+    await chmod(join(root, "run.sh"), 0o755);
+
+    expect(await new GitWorkspace(root).collectChanges()).toEqual([
+      { path: "file.txt", mode: "120000", content: Buffer.from("target.txt") },
+      { path: "run.sh", mode: "100755", content: Buffer.from("#!/bin/sh\n") },
+    ]);
+  });
+
   it("returns no changes for a clean checkout", async () => {
     const { root } = await fixture();
-    expect(await collectChanges(root)).toEqual([]);
+    expect(await new GitWorkspace(root).collectChanges()).toEqual([]);
   });
 
   it("rejects a changed submodule", async () => {
@@ -202,7 +220,7 @@ describe("collectChanges", () => {
     await git(root, "clone", "--quiet", root, "module");
     await git(root, "update-index", "--add", "--cacheinfo", `160000,${sha},module`);
 
-    await expect(collectChanges(root)).rejects.toThrow(/mode|submodule/);
+    await expect(new GitWorkspace(root).collectChanges()).rejects.toThrow(/mode|submodule/);
   });
 
   it.each(["delete", "replace"])("rejects a submodule %s", async (operation) => {
@@ -215,6 +233,6 @@ describe("collectChanges", () => {
       await writeFile(join(root, "module"), "regular file");
     }
 
-    await expect(collectChanges(root)).rejects.toThrow(/mode|submodule/);
+    await expect(new GitWorkspace(root).collectChanges()).rejects.toThrow(/mode|submodule/);
   });
 });

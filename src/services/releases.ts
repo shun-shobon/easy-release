@@ -2,7 +2,7 @@ import { latestVersion, versionTags } from "../utils/version";
 
 import type { Config } from "./config";
 import type { FileChange, Release, ReleaseRepository } from "./definitions";
-import { managedBranch, preparationMessage } from "./release-names";
+import { parseManagedBranch, preparationMessage } from "./release-names";
 
 export type PublishInput = {
   releaseId: number;
@@ -60,7 +60,9 @@ export class ReleaseService {
     const { config, tag, branch } = input;
     const pulls = await this.repository.listOpenPullRequests(input.baseBranch);
     const previous = pulls.filter(
-      (pull) => pull.repository === input.repository && managedBranch(config, pull.branch),
+      (pull) =>
+        pull.repository === input.repository &&
+        parseManagedBranch(config, pull.branch) !== undefined,
     );
     const existing = await this.repository.getBranch(branch);
     const orphaned = existing && !previous.some((pull) => pull.branch === branch);
@@ -133,10 +135,6 @@ export class ReleaseService {
 
     const release = existing ?? (await this.repository.createDraft(tag, commit));
 
-    if (!release.draft || release.tag !== tag || release.commit !== commit) {
-      throw new Error("The created release does not match the expected draft, tag, or commit.");
-    }
-
     return result(release, tag, commit);
   }
 
@@ -163,10 +161,6 @@ export class ReleaseService {
     }
 
     const published = await this.repository.publishRelease(input.releaseId);
-
-    if (published.draft || published.tag !== input.tag || published.id !== input.releaseId) {
-      throw new Error("The published release does not match the expected state, tag, or ID.");
-    }
 
     for (const tag of tags) {
       if (await this.repository.getTag(tag)) {

@@ -13,7 +13,7 @@ import { PreparationService } from "../services/preparation";
 import type { ReleaseType } from "../utils/version";
 
 import { FileSystemPackages } from "./package-files";
-import { createWorkspace } from "./workspace";
+import { GitWorkspace } from "./workspace";
 
 const execute = promisify(execFile);
 const config = v.parse(configSchema, { packageFiles: ["package.json"] });
@@ -52,10 +52,13 @@ describe("preparation with a Git checkout", () => {
     );
     await git("update-ref", "HEAD", commit);
 
-    return new PreparationService(
-      createWorkspace(root),
-      new PackageService(new FileSystemPackages(root)),
-    );
+    return {
+      commit,
+      preparation: new PreparationService(
+        new GitWorkspace(root),
+        new PackageService(new FileSystemPackages(root)),
+      ),
+    };
   }
 
   it.each([
@@ -65,12 +68,12 @@ describe("preparation with a Git checkout", () => {
   ] satisfies Array<{ type: ReleaseType; version: string }>)(
     "prepares the first $type release from version 0.0.0",
     async ({ type, version }) => {
-      const preparation = await fixture("0.0.0");
+      const { commit, preparation } = await fixture("0.0.0");
 
-      const updated = await preparation.updateVersions(config, "0.0.0", type);
-      const changes = await preparation.finish(config, updated);
+      const plan = await preparation.plan(config, commit, "0.0.0", type);
+      const changes = await preparation.apply(config, plan);
 
-      expect(updated.tag).toBe(`v${version}`);
+      expect(plan.tag).toBe(`v${version}`);
       expect(changes).toEqual([
         {
           path: "package.json",
@@ -82,18 +85,18 @@ describe("preparation with a Git checkout", () => {
   );
 
   it("accepts a first release whose package already has the target version", async () => {
-    const preparation = await fixture("0.1.0");
-    const updated = await preparation.updateVersions(config, "0.0.0", "minor");
+    const { commit, preparation } = await fixture("0.1.0");
+    const plan = await preparation.plan(config, commit, "0.0.0", "minor");
 
-    await expect(preparation.finish(config, updated)).resolves.toEqual([]);
+    await expect(preparation.apply(config, plan)).resolves.toEqual([]);
   });
 
   it("accepts preparation without packages or an update command", async () => {
-    const preparation = await fixture("0.1.0");
+    const { commit, preparation } = await fixture("0.1.0");
     const emptyConfig = { ...config, packageFiles: [] };
 
-    const updated = await preparation.updateVersions(emptyConfig, "0.0.0", "minor");
+    const plan = await preparation.plan(emptyConfig, commit, "0.0.0", "minor");
 
-    await expect(preparation.finish(emptyConfig, updated)).resolves.toEqual([]);
+    await expect(preparation.apply(emptyConfig, plan)).resolves.toEqual([]);
   });
 });

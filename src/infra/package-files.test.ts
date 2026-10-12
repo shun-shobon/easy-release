@@ -27,6 +27,10 @@ describe("package version updates", () => {
     await writeFile(path, content);
   }
 
+  async function expectVersion(relativePath: string, version: string): Promise<void> {
+    await expect(packages.verify([relativePath], version)).resolves.toBeUndefined();
+  }
+
   async function packageFile(relativePath: string, version = "1.2.3"): Promise<void> {
     await write(relativePath, JSON.stringify({ name: relativePath, version }));
   }
@@ -58,13 +62,12 @@ describe("package version updates", () => {
     await packages.update(["apps/main/package.json", ...patterns], "1.2.4");
     await packageFile("packages/new/package.json", "1.2.3");
 
-    const version = await packages.readVersion("apps/main/package.json");
     const files = await packages.resolveFiles(["apps/main/package.json", ...patterns]);
 
-    await expect(packages.verify(files, version)).rejects.toThrow(
+    await expect(packages.verify(files, "1.2.4")).rejects.toThrow(
       "Package version differs from 1.2.4: packages/new/package.json (1.2.3)",
     );
-    expect(await packages.readVersion("packages/new/package.json")).toBe("1.2.3");
+    await expectVersion("packages/new/package.json", "1.2.3");
   });
 
   it("updates all selected files without a root package.json", async () => {
@@ -72,31 +75,26 @@ describe("package version updates", () => {
     await packageFile("packages/b/package.json");
     await packageFile("packages/a/package.json");
 
-    const result = await packages.update(
+    const files = await packages.update(
       ["apps/main/package.json", "packages/*/package.json"],
       "1.3.0",
     );
 
-    expect(result).toEqual({
-      version: "1.3.0",
-      files: ["apps/main/package.json", "packages/a/package.json", "packages/b/package.json"],
-    });
+    expect(files).toEqual([
+      "apps/main/package.json",
+      "packages/a/package.json",
+      "packages/b/package.json",
+    ]);
 
-    await expect(packages.verify(result.files, "1.3.0")).resolves.toBeUndefined();
+    await expect(packages.verify(files, "1.3.0")).resolves.toBeUndefined();
   });
 
   it("updates single files and deduplicates overlapping globs", async () => {
     await packageFile("package.json");
-    expect(await packages.update(["package.json"], "1.2.4")).toEqual({
-      version: "1.2.4",
-      files: ["package.json"],
-    });
+    expect(await packages.update(["package.json"], "1.2.4")).toEqual(["package.json"]);
     expect(
       await packages.update(["./package.json", "package.json", "**/package.json"], "1.2.5"),
-    ).toEqual({
-      version: "1.2.5",
-      files: ["package.json"],
-    });
+    ).toEqual(["package.json"]);
   });
 
   it("does not change an unselected root package.json", async () => {
@@ -105,8 +103,8 @@ describe("package version updates", () => {
 
     await packages.update(["packages/*/package.json"], "2.0.0");
 
-    expect(await packages.readVersion("package.json")).toBe("9.0.0");
-    expect(await packages.readVersion("packages/a/package.json")).toBe("2.0.0");
+    await expectVersion("package.json", "9.0.0");
+    await expectVersion("packages/a/package.json", "2.0.0");
   });
 
   it("updates nothing when any glob has no matches", async () => {
@@ -115,7 +113,7 @@ describe("package version updates", () => {
     await expect(
       packages.update(["package.json", "package.json", "missing/*/package.json"], "1.2.4"),
     ).rejects.toThrow(/missing\/\*\/package.json/);
-    expect(await packages.readVersion("package.json")).toBe("1.2.3");
+    await expectVersion("package.json", "1.2.3");
   });
 
   it("excludes node_modules and .git at every depth", async () => {
@@ -131,8 +129,8 @@ describe("package version updates", () => {
     }
 
     await packageFile("nested/package.json");
-    const result = await packages.update(["package.json", "**/package.json"], "1.2.4");
-    expect(result.files).toEqual(["nested/package.json", "package.json"]);
+    const files = await packages.update(["package.json", "**/package.json"], "1.2.4");
+    expect(files).toEqual(["nested/package.json", "package.json"]);
   });
 
   it.each([
@@ -148,7 +146,7 @@ describe("package version updates", () => {
     await packageFile("package.json");
 
     await expect(packages.update(["package.json", pattern], "1.2.4")).rejects.toThrow();
-    expect(await packages.readVersion("package.json")).toBe("1.2.3");
+    await expectVersion("package.json", "1.2.3");
   });
 
   it("updates different initial versions to the requested shared version", async () => {
@@ -156,9 +154,9 @@ describe("package version updates", () => {
     await packageFile("packages/a/package.json");
     await packageFile("packages/z/package.json", "2.0.0");
 
-    const result = await packages.update(["package.json", "packages/*/package.json"], "3.0.0");
+    const files = await packages.update(["package.json", "packages/*/package.json"], "3.0.0");
 
-    await expect(packages.verify(result.files, "3.0.0")).resolves.toBeUndefined();
+    await expect(packages.verify(files, "3.0.0")).resolves.toBeUndefined();
   });
 
   it.each([
@@ -175,7 +173,7 @@ describe("package version updates", () => {
     await expect(
       packages.update(["package.json", "packages/*/package.json"], "1.2.4"),
     ).rejects.toThrow(/packages\/bad\/package.json/);
-    expect(await packages.readVersion("package.json")).toBe("1.2.3");
+    await expectVersion("package.json", "1.2.3");
   });
 
   it("preserves other properties, tabs, CRLF, and the trailing newline", async () => {
@@ -201,16 +199,16 @@ describe("package version updates", () => {
     await packageFile("package.json");
     await packageFile("node_modules/a/package.json");
 
-    await expect(packages.readVersion("../package.json")).rejects.toThrow();
-    await expect(packages.readVersion(join(root, "package.json"))).rejects.toThrow();
-    await expect(packages.readVersion("node_modules/a/package.json")).rejects.toThrow();
+    await expect(packages.verify(["../package.json"], "1.2.3")).rejects.toThrow();
+    await expect(packages.verify([join(root, "package.json")], "1.2.3")).rejects.toThrow();
+    await expect(packages.verify(["node_modules/a/package.json"], "1.2.3")).rejects.toThrow();
   });
 
   it("rejects symlinked package.json files", async () => {
     await packageFile("original/package.json");
     await symlink(join(root, "original/package.json"), join(root, "package.json"));
 
-    await expect(packages.readVersion("package.json")).rejects.toThrow(/symbolic/i);
+    await expect(packages.verify(["package.json"], "1.2.3")).rejects.toThrow(/symbolic/i);
   });
 
   it("rejects files under symlinked directories", async () => {
@@ -220,7 +218,7 @@ describe("package version updates", () => {
     await expect(
       packages.update(["original/package.json", "linked/package.json"], "1.2.4"),
     ).rejects.toThrow(/symbolic/i);
-    expect(await packages.readVersion("original/package.json")).toBe("1.2.3");
+    await expectVersion("original/package.json", "1.2.3");
   });
 
   it("rejects links outside the repository without changing their targets", async () => {
@@ -235,10 +233,10 @@ describe("package version updates", () => {
         "1.2.4",
       ),
     ).rejects.toThrow(/symbolic/i);
-    expect(await packages.readVersion("outside/package.json")).toBe("1.2.3");
-    expect(
-      await new PackageService(new FileSystemPackages(repository)).readVersion("package.json"),
-    ).toBe("1.2.3");
+    await expectVersion("outside/package.json", "1.2.3");
+    await expect(
+      new PackageService(new FileSystemPackages(repository)).verify(["package.json"], "1.2.3"),
+    ).resolves.toBeUndefined();
   });
 
   it("rejects globs that match directories", async () => {

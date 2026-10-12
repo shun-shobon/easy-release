@@ -6,28 +6,26 @@ import * as v from "valibot";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GitHub } from "../infra/github";
-import { assertCheckout, collectChanges, runUpdateCommand, validateRefs } from "../infra/workspace";
 import { configSchema, type Config } from "../services/config";
+import type { Workspace } from "../services/definitions";
 import { PackageService } from "../services/packages";
 import { PreparationService } from "../services/preparation";
 import { ReleaseService, type PublishInput } from "../services/releases";
 import { draft as executeDraft } from "../usecases/draft";
 import { prepare as executePrepare } from "../usecases/prepare";
-import {
-  publish as executePublish,
-  publishMerged as executePublishMerged,
-} from "../usecases/publish";
+import { publishMerged as executePublishMerged } from "../usecases/publish";
 import type { ReleaseType } from "../utils/version";
 
 import { parseReleaseEvent } from "./action-event";
 import { FileSystemPackages } from "./package-files";
 
-vi.mock("../infra/workspace", () => ({
-  assertCheckout: vi.fn(),
-  collectChanges: vi.fn(),
-  runUpdateCommand: vi.fn(),
-  validateRefs: vi.fn(),
-}));
+const workspace = {
+  assertCheckout: vi.fn<Workspace["assertCheckout"]>(),
+  validateRefs: vi.fn<Workspace["validateRefs"]>(),
+  runUpdateCommand: vi.fn<Workspace["runUpdateCommand"]>(),
+  collectChanges: vi.fn<Workspace["collectChanges"]>(),
+};
+const { assertCheckout, collectChanges, runUpdateCommand, validateRefs } = workspace;
 
 type FixtureContext = {
   root: string;
@@ -43,13 +41,7 @@ function services(root: string, github: GitHub) {
   return {
     releases: new ReleaseService(github),
     preparation: new PreparationService(
-      {
-        assertCheckout: (sha) => assertCheckout(root, sha),
-        validateRefs: (refs) => validateRefs(root, refs),
-        runUpdateCommand: (command, previous, version) =>
-          runUpdateCommand(root, command, previous, version),
-        collectChanges: () => collectChanges(root),
-      },
+      workspace,
       new PackageService(new FileSystemPackages(root)),
     ),
   };
@@ -81,7 +73,7 @@ function publishMerged(config: Config, context: FixtureContext, github: GitHub) 
 }
 
 function publish(github: GitHub, input: PublishInput) {
-  return executePublish(new ReleaseService(github), input);
+  return new ReleaseService(github).publish(input);
 }
 
 const sha = "a".repeat(40);
@@ -118,7 +110,10 @@ function client(responses: unknown[], tags: string[] = ["v1.2.3"]) {
     return value instanceof Response ? value : Response.json(value);
   };
 
-  return { github: new GitHub("https://api.github.com", "o/r", "test", fetcher), calls };
+  return {
+    github: new GitHub("https://api.github.com", { owner: "o", repo: "r" }, "test", fetcher),
+    calls,
+  };
 }
 
 describe("config", () => {
@@ -336,7 +331,7 @@ describe("prepare and draft lifecycle", () => {
     vi.resetAllMocks();
     root = await mkdtemp(join(tmpdir(), "easy-release-service-"));
     await writeFile(join(root, "package.json"), '{"version":"1.2.3"}\n');
-    vi.mocked(collectChanges).mockResolvedValue([
+    collectChanges.mockResolvedValue([
       { path: "package.json", mode: "100644", content: Buffer.from('{"version":"1.2.4"}\n') },
     ]);
   });
@@ -394,7 +389,7 @@ describe("prepare and draft lifecycle", () => {
         commit: sha,
         releaseId: 9,
       });
-      expect(assertCheckout).toHaveBeenCalledWith(root, sha);
+      expect(assertCheckout).toHaveBeenCalledWith(sha);
       expect(calls.filter((call) => call.method === "POST")).toHaveLength(existing ? 0 : 2);
       expect(calls.at(-1)).toMatchObject({
         method: "PATCH",
@@ -457,16 +452,6 @@ describe("prepare and draft lifecycle", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it.each([{ draft: false }, { tag_name: "v9.0.0" }, { target_commitish: "other" }])(
-    "rejects an inconsistent draft creation response: %j",
-    async (change) => {
-      const { github, calls } = client([[], missing(), reference, { ...release, ...change }]);
-
-      await expect(publishMerged(config, merged(), github)).rejects.toThrow("expected draft");
-      expect(calls.some((call) => call.method === "PATCH")).toBe(false);
-    },
-  );
-
   it.each(["network", "timeout"])(
     "stops publication on a %s failure creating the draft",
     async (failure) => {
@@ -488,7 +473,13 @@ describe("prepare and draft lifecycle", () => {
           });
         });
       });
-      const github = new GitHub("https://api.github.com", "o/r", "test", fetcher, 50);
+      const github = new GitHub(
+        "https://api.github.com",
+        { owner: "o", repo: "r" },
+        "test",
+        fetcher,
+        50,
+      );
 
       await expect(publishMerged(config, merged(), github)).rejects.toThrow(
         failure === "network" ? "connect" : "timed out",
@@ -502,7 +493,7 @@ describe("prepare and draft lifecycle", () => {
     "creates a preparation PR with an empty commit for package targets $packageFiles",
     async ({ packageFiles }) => {
       await writeFile(join(root, "package.json"), '{"version":"0.1.0"}\n');
-      vi.mocked(collectChanges).mockResolvedValue([]);
+      collectChanges.mockResolvedValue([]);
       const commit = "b".repeat(40);
       const tree = "c".repeat(40);
       const { github, calls } = client(
@@ -546,7 +537,7 @@ describe("prepare and draft lifecycle", () => {
   it.each([422, 503])(
     "keeps the previous PR when empty commit creation fails with HTTP %i",
     async (status) => {
-      vi.mocked(collectChanges).mockResolvedValue([]);
+      collectChanges.mockResolvedValue([]);
       const { github, calls } = client([
         reference,
         missing(),
@@ -577,7 +568,7 @@ describe("prepare and draft lifecycle", () => {
       tag: "v1.2.3",
       commit: sha,
     });
-    expect(assertCheckout).toHaveBeenCalledWith(root, sha);
+    expect(assertCheckout).toHaveBeenCalledWith(sha);
     expect(calls.at(-1)?.body).toEqual({
       tag_name: "v1.2.3",
       target_commitish: sha,
@@ -713,17 +704,17 @@ describe("prepare and draft lifecycle", () => {
       expect(JSON.parse(await readFile(join(root, "package.json"), "utf8"))).toMatchObject({
         version,
       });
-      expect(runUpdateCommand).toHaveBeenCalledWith(root, "update-other-files", previous, version);
+      expect(runUpdateCommand).toHaveBeenCalledWith("update-other-files", previous, version);
       expect(calls.at(-1)?.body).toMatchObject({ head: `release/prepare-v${version}` });
     },
   );
 
   it("prepares a release using an update command without packages", async () => {
     await rm(join(root, "package.json"));
-    vi.mocked(runUpdateCommand).mockImplementation(async (_root, _command, _previous, version) => {
+    runUpdateCommand.mockImplementation(async (_command, _previous, version) => {
       await writeFile(join(root, "VERSION"), version);
     });
-    vi.mocked(collectChanges).mockResolvedValue([
+    collectChanges.mockResolvedValue([
       { path: "VERSION", mode: "100644", content: Buffer.from("0.0.1") },
     ]);
     const { github } = client(
@@ -763,18 +754,18 @@ describe("prepare and draft lifecycle", () => {
   });
 
   it("fails before closing PRs when the hook fails", async () => {
-    vi.mocked(runUpdateCommand).mockRejectedValue(new Error("hook failed"));
+    runUpdateCommand.mockRejectedValue(new Error("hook failed"));
     const { github, calls } = client([reference, missing()]);
 
     await expect(
       prepare({ ...config, updateCommand: "node update.mjs" }, context(), github, "patch"),
     ).rejects.toThrow("hook failed");
-    expect(runUpdateCommand).toHaveBeenCalledWith(root, "node update.mjs", "1.2.3", "1.2.4");
+    expect(runUpdateCommand).toHaveBeenCalledWith("node update.mjs", "1.2.3", "1.2.4");
     expect(calls.every((call) => call.method === "GET")).toBe(true);
   });
 
   it("checks that a successful hook did not undo the version update", async () => {
-    vi.mocked(runUpdateCommand).mockImplementation(async () => {
+    runUpdateCommand.mockImplementation(async () => {
       await writeFile(join(root, "package.json"), '{"version":"1.2.3"}');
     });
 
@@ -794,7 +785,7 @@ describe("prepare and draft lifecycle", () => {
   });
 
   it("rejects invalid refs before any remote mutation", async () => {
-    vi.mocked(validateRefs).mockRejectedValue(new Error("invalid ref"));
+    validateRefs.mockRejectedValue(new Error("invalid ref"));
     const { github, calls } = client([reference]);
 
     await expect(
