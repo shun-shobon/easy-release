@@ -21,17 +21,26 @@ Changesets や release-please よりも、さらに手軽にリリースを自�
 }
 ```
 
-| 設定                | 既定値             | 内容                                                                                   |
-| ------------------- | ------------------ | -------------------------------------------------------------------------------------- |
-| `packageFiles`      | 必須               | 更新対象となる `package.json` のパス配列。`packages/*/package.json` などの glob に対応 |
-| `tagPrefix`         | `v`                | リリースタグの接頭辞                                                                   |
-| `updateVersionTags` | `false`            | 公開成功後にメジャー・マイナータグ（例: `v1`, `v1.2`）を両方自動更新するかどうか       |
-| `branchPrefix`      | `release/prepare-` | リリース準備 PR 用ブランチの接頭辞                                                     |
-| `updateCommand`     | なし               | バージョン更新後に実行する Bash コマンド                                               |
+| 設定                | 既定値             | 内容                                                                                                   |
+| ------------------- | ------------------ | ------------------------------------------------------------------------------------------------------ |
+| `packageFiles`      | 必須               | 更新対象となる `package.json` や `Cargo.toml` のパス配列。`packages/*/package.json` などの glob に対応 |
+| `tagPrefix`         | `v`                | リリースタグの接頭辞                                                                                   |
+| `updateVersionTags` | `false`            | 公開成功後にメジャー・マイナータグ（例: `v1`, `v1.2`）を両方自動更新するかどうか                       |
+| `branchPrefix`      | `release/prepare-` | リリース準備 PR 用ブランチの接頭辞                                                                     |
+| `updateCommand`     | なし               | バージョン更新後に実行する Bash コマンド                                                               |
 
 現在のバージョンは、既存の Git タグの中から最新の安定版セマンティックバージョンを取得して決定します。該当するタグが存在しない場合は `0.0.0` を基準とします。対象のパッケージはすべて同じバージョンに揃えて更新されます。
 
-上記の例では、`updateCommand` で依存関係をインストールし、`package.json` の `format` スクリプトを実行してフォーマットを整えています。その他の関連ファイルの更新処理もこのコマンドに含めることができます。コマンド実行時には環境変数 `PREVIOUS_VERSION`（更新前バージョン）と `RELEASE_VERSION`（更新後バージョン）が渡されます。必要なツールやランタイムは、Action の実行前にセットアップしてください。
+ファイル名が `Cargo.toml` のファイルは Cargo マニフェストとして扱い、`[package]` と `[workspace.package]` の `version` を更新します。`version.workspace = true` で継承しているクレートはそのまま残ります。`Cargo.lock` やワークスペース内クレート間の依存バージョンは更新しないため、必要に応じて `updateCommand` で更新してください。
+
+```json
+{
+  "packageFiles": ["Cargo.toml"],
+  "updateCommand": "cargo update --workspace"
+}
+```
+
+最初の例では、`updateCommand` で依存関係をインストールし、`package.json` の `format` スクリプトを実行してフォーマットを整えています。その他の関連ファイルの更新処理もこのコマンドに含めることができます。コマンド実行時には環境変数 `PREVIOUS_VERSION`（更新前バージョン）と `RELEASE_VERSION`（更新後バージョン）が渡されます。必要なツールやランタイムは、Action の実行前にセットアップしてください。
 
 ### 基本のワークフロー
 
