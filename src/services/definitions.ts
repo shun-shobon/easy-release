@@ -1,6 +1,8 @@
+export type FileMode = "100644" | "100755" | "120000";
+
 export type FileChange = {
   path: string;
-  mode: "100644" | "100755" | "120000";
+  mode: FileMode;
   content: Uint8Array | null;
 };
 
@@ -20,7 +22,7 @@ export interface Workspace {
 export type GitReference = { type: "commit" | "tag"; sha: string };
 export type PullRequest = { number: number; branch: string; repository: string | null };
 export type Release = { id: number; tag: string; commit: string; draft: boolean; url: string };
-export type ReleaseAsset = { name: string; state: string };
+export type ReleaseAsset = { state: string };
 export type NewPullRequest = { base: string; branch: string; title: string; body: string };
 export type NewCommit = { parent: string; message: string; changes: FileChange[] };
 
@@ -47,7 +49,7 @@ export interface ReleaseRepository {
 
 export type ReleaseEvent =
   | { kind: "dispatch" }
-  | { kind: "other"; name: string }
+  | { kind: "other" }
   | {
       kind: "pull-request";
       action: string;

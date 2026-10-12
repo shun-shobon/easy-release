@@ -33,16 +33,11 @@ export class PackageService {
     }
   }
 
-  async readVersion(file: string): Promise<string> {
-    return (await this.readPackage(file)).version;
-  }
-
   resolveFiles(packageFiles: string[]): Promise<string[]> {
     return this.store.resolve(packageFiles);
   }
 
-  async update(packageFiles: string[], version: string) {
-    assertStableVersion(version);
+  async update(packageFiles: string[], version: string): Promise<string[]> {
     const files = await this.store.resolve(packageFiles);
     const packages = await Promise.all(files.map((file) => this.readPackage(file)));
 
@@ -51,14 +46,12 @@ export class PackageService {
       await this.store.write(pkg.file, serializePackage(pkg.source, pkg.data));
     }
 
-    return { version, files };
+    return files;
   }
 
   async verify(files: string[], version: string): Promise<void> {
-    assertStableVersion(version);
-
     for (const file of files) {
-      const actual = await this.readVersion(file);
+      const actual = (await this.readPackage(file)).version;
 
       if (actual !== version) {
         throw new Error(`Package version differs from ${version}: ${file} (${actual})`);

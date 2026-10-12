@@ -10,21 +10,17 @@ const config = v.parse(configSchema, {
   packageFiles: ["package.json"],
 });
 const sha = "a".repeat(40);
-const updated = {
+const plan = {
   previousVersion: "1.2.2",
   version: "1.2.3",
-  files: ["package.json"],
   tag: "v1.2.3",
   branch: "release/prepare-v1.2.3",
 };
 function services() {
   return {
     preparation: {
-      assertCheckout: vi.fn<PrepareServices["preparation"]["assertCheckout"]>(),
-      updateVersions: vi
-        .fn<PrepareServices["preparation"]["updateVersions"]>()
-        .mockResolvedValue(updated),
-      finish: vi.fn<PrepareServices["preparation"]["finish"]>().mockResolvedValue([]),
+      plan: vi.fn<PrepareServices["preparation"]["plan"]>().mockResolvedValue(plan),
+      apply: vi.fn<PrepareServices["preparation"]["apply"]>().mockResolvedValue([]),
     },
     releases: {
       currentVersion: vi
@@ -48,26 +44,26 @@ function context(): ReleaseContext {
 }
 
 describe("prepare", () => {
-  it("checks checkout, base, tags, and updates before requesting a PR", async () => {
+  it("checks base, tags, and the plan before updating files and requesting a PR", async () => {
     const dependencies = services();
     const { preparation, releases } = dependencies;
 
     await prepare(config, context(), dependencies, "patch");
 
     const order = [
-      preparation.assertCheckout,
       releases.assertBaseCommit,
       releases.currentVersion,
-      preparation.updateVersions,
+      preparation.plan,
       releases.assertTagAvailable,
-      preparation.finish,
+      preparation.apply,
       releases.createPreparation,
     ].map((method) => method.mock.invocationCallOrder[0]);
     expect(order).toEqual([...order].sort((left, right) => Number(left) - Number(right)));
     expect(releases.currentVersion).toHaveBeenCalledWith(config.tagPrefix);
-    expect(preparation.updateVersions).toHaveBeenCalledWith(config, "1.2.2", "patch");
+    expect(preparation.plan).toHaveBeenCalledWith(config, sha, "1.2.2", "patch");
+    expect(preparation.apply).toHaveBeenCalledWith(config, plan);
     expect(releases.createPreparation).toHaveBeenCalledWith(
-      expect.objectContaining({ baseCommit: sha, tag: updated.tag, changes: [] }),
+      expect.objectContaining({ baseCommit: sha, tag: plan.tag, changes: [] }),
     );
   });
 
@@ -93,7 +89,7 @@ describe("prepare", () => {
     await expect(
       prepare(config, { ...context(), defaultBranch: "develop" }, dependencies, "patch"),
     ).rejects.toThrow("develop");
-    expect(dependencies.preparation.assertCheckout).not.toHaveBeenCalled();
+    expect(dependencies.releases.assertBaseCommit).not.toHaveBeenCalled();
   });
 
   it("does not update files when base validation fails", async () => {
@@ -101,7 +97,7 @@ describe("prepare", () => {
     dependencies.releases.assertBaseCommit.mockRejectedValue(new Error("stale base"));
 
     await expect(prepare(config, context(), dependencies, "patch")).rejects.toThrow("stale base");
-    expect(dependencies.preparation.updateVersions).not.toHaveBeenCalled();
+    expect(dependencies.preparation.apply).not.toHaveBeenCalled();
   });
 
   it("does not change packages or PRs when fetching tags fails", async () => {
@@ -111,13 +107,21 @@ describe("prepare", () => {
     await expect(prepare(config, context(), dependencies, "patch")).rejects.toThrow(
       "tags unavailable",
     );
-    expect(dependencies.preparation.updateVersions).not.toHaveBeenCalled();
+    expect(dependencies.preparation.apply).not.toHaveBeenCalled();
     expect(dependencies.releases.createPreparation).not.toHaveBeenCalled();
+  });
+
+  it("does not update files when the tag already exists", async () => {
+    const dependencies = services();
+    dependencies.releases.assertTagAvailable.mockRejectedValue(new Error("tag exists"));
+
+    await expect(prepare(config, context(), dependencies, "patch")).rejects.toThrow("tag exists");
+    expect(dependencies.preparation.apply).not.toHaveBeenCalled();
   });
 
   it("does not change PRs when update validation fails", async () => {
     const dependencies = services();
-    dependencies.preparation.finish.mockRejectedValue(new Error("invalid files"));
+    dependencies.preparation.apply.mockRejectedValue(new Error("invalid files"));
 
     await expect(prepare(config, context(), dependencies, "patch")).rejects.toThrow(
       "invalid files",

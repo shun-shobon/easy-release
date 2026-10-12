@@ -2,13 +2,24 @@ import { isStableVersion } from "../utils/version";
 
 import type { Config } from "./config";
 
-export function managedBranch(
-  config: Pick<Config, "branchPrefix" | "tagPrefix">,
-  branch: string,
-): boolean {
+type NamingConfig = Pick<Config, "branchPrefix" | "tagPrefix">;
+
+export function releaseNames(config: NamingConfig, version: string) {
+  const tag = config.tagPrefix + version;
+
+  return { tag, branch: config.branchPrefix + tag };
+}
+
+export function parseManagedBranch(config: NamingConfig, branch: string): string | undefined {
   const prefix = config.branchPrefix + config.tagPrefix;
 
-  return branch.startsWith(prefix) && isStableVersion(branch.slice(prefix.length));
+  if (!branch.startsWith(prefix)) {
+    return undefined;
+  }
+
+  const version = branch.slice(prefix.length);
+
+  return isStableVersion(version) ? version : undefined;
 }
 
 export function preparationMessage(tag: string): string {

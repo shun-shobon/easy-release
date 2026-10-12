@@ -1,12 +1,8 @@
 import type { Config } from "../services/config";
 import type { ReleaseContext } from "../services/definitions";
-import type { PublishInput, ReleaseService } from "../services/releases";
+import type { ReleaseService } from "../services/releases";
 
 import { draft, type DraftServices } from "./draft";
-
-export function publish(releases: Pick<ReleaseService, "publish">, input: PublishInput) {
-  return releases.publish(input);
-}
 
 export async function publishMerged(
   config: Config,
@@ -19,7 +15,7 @@ export async function publishMerged(
     return release;
   }
 
-  const published = await publish(services.releases, {
+  const published = await services.releases.publish({
     releaseId: release.releaseId,
     tag: release.tag,
     commit: release.commit,

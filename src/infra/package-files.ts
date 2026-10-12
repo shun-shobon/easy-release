@@ -66,12 +66,8 @@ export class FileSystemPackages implements PackageFileStore {
       let matched = false;
 
       for await (const match of glob(pattern, { cwd: this.root, exclude: isExcluded })) {
-        const file = match.split(sep).join("/");
-        if (!isExcluded(file)) {
-          validateRelativePath(file);
-          selected.add(posix.normalize(file));
-          matched = true;
-        }
+        selected.add(match.split(sep).join("/"));
+        matched = true;
       }
 
       if (!matched) {

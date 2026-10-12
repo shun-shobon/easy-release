@@ -1,6 +1,7 @@
 import * as v from "valibot";
 
 import type { PublishInput } from "../services/releases";
+import { nonempty } from "../utils/schema";
 
 export function parsePublishInput(
   releaseId: string,
@@ -20,8 +21,8 @@ export function parsePublishInput(
         v.safeInteger(),
         v.minValue(1),
       ),
-      tag: v.pipe(v.string(), v.minLength(1)),
-      commit: v.pipe(v.string(), v.minLength(1)),
+      tag: nonempty,
+      commit: nonempty,
     }),
     { releaseId, tag, commit },
   );

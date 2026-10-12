@@ -10,15 +10,9 @@ const config = v.parse(configSchema, {
   packageFiles: ["package.json"],
 });
 const sha = "a".repeat(40);
-const updated = {
-  previousVersion: "1.2.2",
-  version: "1.2.3",
-  files: ["package.json"],
-  tag: "v1.2.3",
-  branch: "release/prepare-v1.2.3",
-};
+const branch = "release/prepare-v1.2.3";
 const result = {
-  tag: updated.tag,
+  tag: "v1.2.3",
   commit: sha,
   releaseId: 9,
   releaseUrl: "https://github.com/o/r/releases/9",
@@ -27,9 +21,7 @@ const result = {
 function services() {
   return {
     preparation: {
-      verifyMerged: vi
-        .fn<DraftServices["preparation"]["verifyMerged"]>()
-        .mockResolvedValue({ version: updated.version, tag: updated.tag }),
+      verifyMerged: vi.fn<DraftServices["preparation"]["verifyMerged"]>(),
     },
     releases: {
       ensureDraft: vi.fn<DraftServices["releases"]["ensureDraft"]>().mockResolvedValue(result),
@@ -49,7 +41,7 @@ function merged(): ReleaseContext {
       merged: true,
       mergeCommit: sha,
       baseBranch: "main",
-      branch: updated.branch,
+      branch,
       repository: "o/r",
     },
   };
@@ -65,20 +57,23 @@ describe("draft", () => {
     expect(dependencies.preparation.verifyMerged).not.toHaveBeenCalled();
   });
 
-  it("skips unrelated PRs without calling services", async () => {
-    const dependencies = services();
-    const event = merged();
+  it.each(["feature/test", "release/prepare-v1.2", "release/prepare-v1.2.3-rc.1"])(
+    "skips unrelated branch %s without calling services",
+    async (unrelated) => {
+      const dependencies = services();
+      const event = merged();
 
-    if (event.event.kind !== "pull-request") {
-      throw new Error("Expected pull request");
-    }
+      if (event.event.kind !== "pull-request") {
+        throw new Error("Expected pull request");
+      }
 
-    event.event.branch = "feature/test";
+      event.event.branch = unrelated;
 
-    await expect(draft(config, event, dependencies)).resolves.toEqual({ ready: false });
-    expect(dependencies.preparation.verifyMerged).not.toHaveBeenCalled();
-    expect(dependencies.releases.ensureDraft).not.toHaveBeenCalled();
-  });
+      await expect(draft(config, event, dependencies)).resolves.toEqual({ ready: false });
+      expect(dependencies.preparation.verifyMerged).not.toHaveBeenCalled();
+      expect(dependencies.releases.ensureDraft).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(["main", "develop"])(
     "creates a draft after validating the merge into %s",
@@ -98,12 +93,8 @@ describe("draft", () => {
         version: "1.2.3",
         releaseId: 9,
       });
-      expect(dependencies.preparation.verifyMerged).toHaveBeenCalledWith(
-        config,
-        sha,
-        updated.branch,
-      );
-      expect(dependencies.releases.ensureDraft).toHaveBeenCalledWith(updated.tag, sha);
+      expect(dependencies.preparation.verifyMerged).toHaveBeenCalledWith(config, sha, "1.2.3");
+      expect(dependencies.releases.ensureDraft).toHaveBeenCalledWith("v1.2.3", sha);
     },
   );
 

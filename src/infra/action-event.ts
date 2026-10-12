@@ -1,8 +1,8 @@
 import * as v from "valibot";
 
 import type { ReleaseEvent } from "../services/definitions";
+import { nonempty } from "../utils/schema";
 
-const nonempty = v.pipe(v.string(), v.minLength(1));
 const pullEventSchema = v.object({
   action: nonempty,
   pull_request: v.object({
@@ -25,7 +25,7 @@ export function parseReleaseEvent(name: string, value: unknown): ReleaseEvent {
   }
 
   if (name !== "pull_request") {
-    return { kind: "other", name };
+    return { kind: "other" };
   }
 
   const event = v.parse(pullEventSchema, value);

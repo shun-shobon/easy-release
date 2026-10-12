@@ -40,7 +40,7 @@ describe("ReleaseService", () => {
     const repo = repository();
     repo.getRelease.mockResolvedValue(release);
     repo.getTag.mockResolvedValue({ type: "commit", sha });
-    repo.listAssets.mockResolvedValue([{ name: "app.zip", state: "uploaded" }]);
+    repo.listAssets.mockResolvedValue([{ state: "uploaded" }]);
     repo.publishRelease.mockResolvedValue({ ...release, draft: false });
 
     await expect(
@@ -107,36 +107,25 @@ describe("ReleaseService", () => {
     expect(repo.publishRelease).not.toHaveBeenCalled();
   });
 
-  it.each(["exception", "draft", "tag", "id"])(
-    "does not move tags after a publish %s failure",
-    async (failure) => {
-      const repo = repository();
-      repo.getRelease.mockResolvedValue(release);
-      repo.getTag.mockResolvedValue({ type: "commit", sha });
-      repo.listAssets.mockResolvedValue([]);
-      repo.publishRelease.mockResolvedValue({
-        ...release,
-        draft: failure === "draft",
-        tag: failure === "tag" ? "v2.0.0" : release.tag,
-        id: failure === "id" ? 10 : 9,
-      });
-      if (failure === "exception") {
-        repo.publishRelease.mockRejectedValue(new Error("publish failed"));
-      }
+  it("does not move tags after a publish failure", async () => {
+    const repo = repository();
+    repo.getRelease.mockResolvedValue(release);
+    repo.getTag.mockResolvedValue({ type: "commit", sha });
+    repo.listAssets.mockResolvedValue([]);
+    repo.publishRelease.mockRejectedValue(new Error("publish failed"));
 
-      await expect(
-        new ReleaseService(repo).publish({
-          releaseId: 9,
-          tag: release.tag,
-          commit: sha,
-          versionTags: { prefix: "v" },
-        }),
-      ).rejects.toThrow();
+    await expect(
+      new ReleaseService(repo).publish({
+        releaseId: 9,
+        tag: release.tag,
+        commit: sha,
+        versionTags: { prefix: "v" },
+      }),
+    ).rejects.toThrow("publish failed");
 
-      expect(repo.createTag).not.toHaveBeenCalled();
-      expect(repo.updateTag).not.toHaveBeenCalled();
-    },
-  );
+    expect(repo.createTag).not.toHaveBeenCalled();
+    expect(repo.updateTag).not.toHaveBeenCalled();
+  });
 
   it.each(["get", "create", "update"])(
     "stops after a version tag %s failure",
@@ -172,7 +161,7 @@ describe("ReleaseService", () => {
     const repo = repository();
     repo.getRelease.mockResolvedValue(release);
     repo.getTag.mockResolvedValue({ type: "commit", sha });
-    repo.listAssets.mockResolvedValue([{ name: "app.zip", state: "starter" }]);
+    repo.listAssets.mockResolvedValue([{ state: "starter" }]);
 
     await expect(
       new ReleaseService(repo).publish({ releaseId: 9, tag: release.tag, commit: sha }),

@@ -13,7 +13,13 @@ const release = {
 const reference = { object: { type: "commit", sha } };
 
 function client(fetcher: typeof fetch, timeoutMs = 30_000) {
-  return new GitHub("https://api.github.com", "owner/repo", "secret", fetcher, timeoutMs);
+  return new GitHub(
+    "https://api.github.com",
+    { owner: "owner", repo: "repo" },
+    "secret",
+    fetcher,
+    timeoutMs,
+  );
 }
 
 describe("GitHub", () => {
@@ -111,7 +117,12 @@ describe("GitHub", () => {
 
   it("creates a draft with createRelease and maps the API response", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(release));
-    const github = new GitHub("https://api.example.com/api/v3/", "owner/repo", "secret", fetcher);
+    const github = new GitHub(
+      "https://api.example.com/api/v3/",
+      { owner: "owner", repo: "repo" },
+      "secret",
+      fetcher,
+    );
 
     await expect(github.createDraft("v1.2.3", sha)).resolves.toEqual({
       id: 1,
@@ -234,7 +245,10 @@ describe("GitHub", () => {
   it("passes the base branch to pulls.list and fetches all pages", async () => {
     const pull = {
       number: 1,
-      head: { ref: "release/prepare-v1.2.3", repo: { full_name: "owner/repo" } },
+      head: {
+        ref: "release/prepare-v1.2.3",
+        repo: { full_name: { owner: "owner", repo: "repo" } },
+      },
     };
     const fetcher = vi
       .fn<typeof fetch>()
@@ -253,7 +267,11 @@ describe("GitHub", () => {
     const pulls = await client(fetcher).listOpenPullRequests("main");
 
     expect(pulls).toHaveLength(101);
-    expect(pulls[100]).toEqual({ number: 101, branch: pull.head.ref, repository: "owner/repo" });
+    expect(pulls[100]).toEqual({
+      number: 101,
+      branch: pull.head.ref,
+      repository: { owner: "owner", repo: "repo" },
+    });
     expect(
       fetcher.mock.calls.map(([url]) => (url instanceof Request ? url.url : url.toString())),
     ).toEqual([
@@ -285,8 +303,8 @@ describe("GitHub", () => {
       .mockResolvedValueOnce(Response.json([{ name: "two", state: "uploaded" }]));
 
     await expect(client(fetcher).listAssets(1)).resolves.toEqual([
-      { name: "one", state: "uploaded" },
-      { name: "two", state: "uploaded" },
+      { state: "uploaded" },
+      { state: "uploaded" },
     ]);
     expect(fetcher.mock.calls[1]?.[0]).toBe(next);
   });

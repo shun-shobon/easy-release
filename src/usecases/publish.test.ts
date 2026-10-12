@@ -6,18 +6,7 @@ import type { ReleaseContext, ReleaseEvent } from "../services/definitions";
 import type { ReleaseService } from "../services/releases";
 
 import type { DraftServices } from "./draft";
-import { publish, publishMerged } from "./publish";
-
-describe("publish", () => {
-  it("delegates publishing to the service", async () => {
-    const input = { releaseId: 9, tag: "v1.2.3", commit: "a".repeat(40) };
-    const result = { ...input, releaseUrl: "https://github.com/o/r/releases/9" };
-    const releases = { publish: vi.fn<ReleaseService["publish"]>().mockResolvedValue(result) };
-
-    await expect(publish(releases, input)).resolves.toEqual(result);
-    expect(releases.publish).toHaveBeenCalledWith(input);
-  });
-});
+import { publishMerged } from "./publish";
 
 const config = v.parse(configSchema, { packageFiles: ["package.json"] });
 const sha = "a".repeat(40);
@@ -43,9 +32,7 @@ const context: ReleaseContext = {
 function services() {
   return {
     preparation: {
-      verifyMerged: vi
-        .fn<DraftServices["preparation"]["verifyMerged"]>()
-        .mockResolvedValue({ version: "1.2.3", tag: input.tag }),
+      verifyMerged: vi.fn<DraftServices["preparation"]["verifyMerged"]>(),
     },
     releases: {
       ensureDraft: vi.fn<ReleaseService["ensureDraft"]>().mockResolvedValue(result),
@@ -61,7 +48,6 @@ describe("publishMerged", () => {
       const dependencies = services();
 
       const tag = `${tagPrefix}1.2.3`;
-      dependencies.preparation.verifyMerged.mockResolvedValue({ version: "1.2.3", tag });
       dependencies.releases.ensureDraft.mockResolvedValue({ ...result, tag });
 
       await publishMerged(
@@ -86,7 +72,7 @@ describe("publishMerged", () => {
       version: "1.2.3",
       ...result,
     });
-    expect(dependencies.preparation.verifyMerged).toHaveBeenCalledWith(config, sha, event.branch);
+    expect(dependencies.preparation.verifyMerged).toHaveBeenCalledWith(config, sha, "1.2.3");
     expect(dependencies.releases.ensureDraft).toHaveBeenCalledWith(input.tag, sha);
     expect(dependencies.releases.publish).toHaveBeenCalledWith(input);
     expect(dependencies.preparation.verifyMerged.mock.invocationCallOrder[0]).toBeLessThan(

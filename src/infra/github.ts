@@ -1,7 +1,7 @@
 import { Octokit, RequestError } from "octokit";
-import * as v from "valibot";
 
 import type {
+  FileMode,
   GitReference,
   NewCommit,
   NewPullRequest,
@@ -38,18 +38,14 @@ class GitHubHttpError extends Error {
 
 export class GitHub implements ReleaseRepository {
   private readonly octokit: Octokit;
-  private readonly repository: { owner: string; repo: string };
 
   constructor(
     apiUrl: string,
-    repository: string,
+    private readonly repository: { owner: string; repo: string },
     token: string,
     fetcher: typeof fetch = fetch,
     timeoutMs: number = 30_000,
   ) {
-    const nonempty = v.pipe(v.string(), v.minLength(1));
-    const [owner, repo] = v.parse(v.strictTuple([nonempty, nonempty]), repository.split("/"));
-    this.repository = { owner, repo };
     this.octokit = new Octokit({
       auth: token,
       baseUrl: apiUrl.replace(/\/$/, ""),
@@ -133,7 +129,7 @@ export class GitHub implements ReleaseRepository {
     });
     const tree: Array<{
       path: string;
-      mode: "100644" | "100755" | "120000";
+      mode: FileMode;
       type: "blob";
       sha: string | null;
     }> = [];
@@ -270,7 +266,7 @@ export class GitHub implements ReleaseRepository {
     return this.octokit.paginate(
       this.octokit.rest.repos.listReleaseAssets,
       { ...this.repository, release_id: releaseId, per_page: 100 },
-      ({ data }) => data.map((asset) => ({ name: asset.name, state: asset.state })),
+      ({ data }) => data.map((asset) => ({ state: asset.state })),
     );
   }
 

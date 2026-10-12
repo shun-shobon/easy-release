@@ -17291,29 +17291,28 @@ function pipe(...pipe$1) {
 	});
 }
 //#endregion
+//#region src/utils/schema.ts
+const nonempty = /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ minLength(1));
+//#endregion
 //#region src/infra/action-event.ts
-const nonempty$1 = /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ minLength(1));
 const pullEventSchema = /* @__PURE__ */ object({
-	action: nonempty$1,
+	action: nonempty,
 	pull_request: /* @__PURE__ */ object({
 		merged: /* @__PURE__ */ boolean(),
-		merge_commit_sha: /* @__PURE__ */ nullable(nonempty$1),
-		base: /* @__PURE__ */ object({ ref: nonempty$1 }),
+		merge_commit_sha: /* @__PURE__ */ nullable(nonempty),
+		base: /* @__PURE__ */ object({ ref: nonempty }),
 		head: /* @__PURE__ */ object({
-			ref: nonempty$1,
-			repo: /* @__PURE__ */ nullable(/* @__PURE__ */ object({ full_name: nonempty$1 }))
+			ref: nonempty,
+			repo: /* @__PURE__ */ nullable(/* @__PURE__ */ object({ full_name: nonempty }))
 		})
 	})
 });
 function parseDefaultBranch(value) {
-	return parse$3(/* @__PURE__ */ object({ repository: /* @__PURE__ */ object({ default_branch: nonempty$1 }) }), value).repository.default_branch;
+	return parse$3(/* @__PURE__ */ object({ repository: /* @__PURE__ */ object({ default_branch: nonempty }) }), value).repository.default_branch;
 }
 function parseReleaseEvent(name, value) {
 	if (name === "workflow_dispatch") return { kind: "dispatch" };
-	if (name !== "pull_request") return {
-		kind: "other",
-		name
-	};
+	if (name !== "pull_request") return { kind: "other" };
 	const event = parse$3(pullEventSchema, value);
 	const pull = event.pull_request;
 	return {
@@ -17332,8 +17331,8 @@ function parsePublishInput(releaseId, tag, commit) {
 	if (releaseId === "" && tag === "" && commit === "") return;
 	return parse$3(/* @__PURE__ */ object({
 		releaseId: /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ transform(Number), /* @__PURE__ */ number(), /* @__PURE__ */ safeInteger(), /* @__PURE__ */ minValue(1)),
-		tag: /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ minLength(1)),
-		commit: /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ minLength(1))
+		tag: nonempty,
+		commit: nonempty
 	}), {
 		releaseId,
 		tag,
@@ -23886,15 +23885,10 @@ var GitHubHttpError = class extends Error {
 	}
 };
 var GitHub = class {
-	octokit;
 	repository;
+	octokit;
 	constructor(apiUrl, repository, token, fetcher = fetch, timeoutMs = 3e4) {
-		const nonempty = /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ minLength(1));
-		const [owner, repo] = parse$3(/* @__PURE__ */ strictTuple([nonempty, nonempty]), repository.split("/"));
-		this.repository = {
-			owner,
-			repo
-		};
+		this.repository = repository;
 		this.octokit = new Octokit({
 			auth: token,
 			baseUrl: apiUrl.replace(/\/$/, ""),
@@ -24090,10 +24084,7 @@ var GitHub = class {
 			...this.repository,
 			release_id: releaseId,
 			per_page: 100
-		}, ({ data }) => data.map((asset) => ({
-			name: asset.name,
-			state: asset.state
-		})));
+		}, ({ data }) => data.map((asset) => ({ state: asset.state })));
 	}
 	async publishRelease(id) {
 		const { data } = await this.octokit.rest.repos.updateRelease({
@@ -24147,12 +24138,8 @@ var FileSystemPackages = class {
 				cwd: this.root,
 				exclude: isExcluded
 			})) {
-				const file = match.split(sep).join("/");
-				if (!isExcluded(file)) {
-					validateRelativePath(file);
-					selected.add(posix.normalize(file));
-					matched = true;
-				}
+				selected.add(match.split(sep).join("/"));
+				matched = true;
 			}
 			if (!matched) throw new Error(`Package glob matched no files: ${pattern}`);
 		}
@@ -24164,91 +24151,6 @@ var FileSystemPackages = class {
 const execute = promisify(execFile);
 const gitTimeoutMs = 3e4;
 const maxBuffer = 67108864;
-function createWorkspace(root) {
-	return {
-		assertCheckout: (commit) => assertCheckout(root, commit),
-		validateRefs: (refs) => validateRefs(root, refs),
-		runUpdateCommand: (command, previousVersion, version) => runUpdateCommand(root, command, previousVersion, version),
-		collectChanges: () => collectChanges(root)
-	};
-}
-async function git(root, args) {
-	const { stdout } = await execute("git", args, {
-		cwd: root,
-		encoding: "buffer",
-		timeout: gitTimeoutMs,
-		maxBuffer,
-		killSignal: "SIGKILL"
-	});
-	return stdout;
-}
-async function assertCheckout(root, sha) {
-	const topLevel = (await git(root, ["rev-parse", "--show-toplevel"])).toString().replace(/\n$/, "");
-	if (await realpath(root) !== await realpath(topLevel)) throw new Error("The workspace must be the repository root.");
-	if ((await git(root, ["rev-parse", "HEAD"])).toString().trim() !== sha) throw new Error("Checkout HEAD does not match the requested commit.");
-	if ((await git(root, ["status", "--porcelain"])).length !== 0) throw new Error("The checkout must be clean before preparing a release.");
-}
-async function validateRefs(root, refs) {
-	for (const ref of refs) await git(root, ["check-ref-format", ref]);
-}
-async function runUpdateCommand(root, command, previousVersion, version) {
-	if (process.platform !== "linux" && process.platform !== "darwin") throw new Error("Update commands require a Linux or macOS runner.");
-	await new Promise((resolve, reject) => {
-		const child = spawn("bash", [
-			"--noprofile",
-			"--norc",
-			"-e",
-			"-o",
-			"pipefail",
-			"-c",
-			command
-		], {
-			cwd: root,
-			env: {
-				...process.env,
-				PREVIOUS_VERSION: previousVersion,
-				RELEASE_VERSION: version
-			},
-			detached: true,
-			stdio: [
-				"ignore",
-				"pipe",
-				"pipe"
-			]
-		});
-		let failure;
-		let outputBytes = 0;
-		function terminate(error) {
-			if (failure) return;
-			failure = error;
-			if (child.pid === void 0) return;
-			try {
-				process.kill(-child.pid, "SIGKILL");
-			} catch (cause) {
-				if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH")) {
-					failure = new Error("Failed to terminate the update command process group.", { cause });
-					reject(failure);
-				}
-			}
-		}
-		function accountOutput(chunk) {
-			outputBytes += chunk.length;
-			if (outputBytes > maxBuffer) terminate(/* @__PURE__ */ new Error("The update command exceeded its output limit."));
-		}
-		child.stdout.on("data", accountOutput);
-		child.stderr.on("data", accountOutput);
-		child.stdout.pipe(process.stdout, { end: false });
-		child.stderr.pipe(process.stderr, { end: false });
-		child.once("error", reject);
-		child.once("exit", (code, signal) => {
-			if (code !== 0) terminate(/* @__PURE__ */ new Error(`The update command failed (exit ${code}, signal ${signal}).`));
-		});
-		child.once("close", () => {
-			if (failure) reject(failure);
-			else resolve();
-		});
-	});
-}
 function fileMode(value, path) {
 	if (value === "100644" || value === "100755" || value === "120000") return value;
 	throw new Error(`Unsupported Git mode ${value} for ${path}; submodule changes are not supported.`);
@@ -24259,63 +24161,124 @@ function records(output) {
 	if (items.pop() !== "") throw new Error("Invalid NUL-terminated Git output.");
 	return items;
 }
-async function collectChanges(root) {
-	await git(root, ["add", "--all"]);
-	const changes = records(await git(root, [
-		"diff",
-		"--cached",
-		"--no-renames",
-		"--name-status",
-		"-z"
-	]));
-	const index = /* @__PURE__ */ new Map();
-	for (const entry of records(await git(root, [
-		"ls-files",
-		"--stage",
-		"-z"
-	]))) {
-		const match = /^(\d+) [0-9a-f]+ 0\t([\s\S]+)$/.exec(entry);
-		if (match?.[1] === void 0 || match[2] === void 0) throw new Error("Invalid Git index entry.");
-		index.set(match[2], match[1]);
+var GitWorkspace = class {
+	root;
+	constructor(root) {
+		this.root = root;
 	}
-	const result = [];
-	for (let position = 0; position < changes.length; position += 2) {
-		const status = changes[position];
-		const path = changes[position + 1];
-		if (path === void 0 || status === void 0 || ![
-			"A",
-			"M",
-			"D",
-			"T"
-		].includes(status)) throw new Error("Unsupported staged Git change.");
-		let previousMode;
-		if (status !== "A") previousMode = fileMode(records(await git(root, [
-			"ls-tree",
-			"-z",
-			"HEAD",
-			"--",
-			`:(literal)${path}`
-		]))[0]?.split(" ")[0], path);
-		if (status === "D") result.push({
-			path,
-			mode: fileMode(previousMode, path),
-			content: null
+	async git(args) {
+		const { stdout } = await execute("git", args, {
+			cwd: this.root,
+			encoding: "buffer",
+			timeout: gitTimeoutMs,
+			maxBuffer,
+			killSignal: "SIGKILL"
 		});
-		else {
-			const mode = fileMode(index.get(path), path);
-			const content = await git(root, ["show", `:${path}`]);
-			result.push({
+		return stdout;
+	}
+	async assertCheckout(sha) {
+		const topLevel = (await this.git(["rev-parse", "--show-toplevel"])).toString().replace(/\n$/, "");
+		if (await realpath(this.root) !== await realpath(topLevel)) throw new Error("The workspace must be the repository root.");
+		if ((await this.git(["rev-parse", "HEAD"])).toString().trim() !== sha) throw new Error("Checkout HEAD does not match the requested commit.");
+		if ((await this.git(["status", "--porcelain"])).length !== 0) throw new Error("The checkout must be clean before preparing a release.");
+	}
+	async validateRefs(refs) {
+		for (const ref of refs) await this.git(["check-ref-format", ref]);
+	}
+	async runUpdateCommand(command, previousVersion, version) {
+		if (process.platform !== "linux" && process.platform !== "darwin") throw new Error("Update commands require a Linux or macOS runner.");
+		await new Promise((resolve, reject) => {
+			const child = spawn("bash", [
+				"--noprofile",
+				"--norc",
+				"-e",
+				"-o",
+				"pipefail",
+				"-c",
+				command
+			], {
+				cwd: this.root,
+				env: {
+					...process.env,
+					PREVIOUS_VERSION: previousVersion,
+					RELEASE_VERSION: version
+				},
+				detached: true,
+				stdio: [
+					"ignore",
+					"pipe",
+					"pipe"
+				]
+			});
+			let failure;
+			let outputBytes = 0;
+			function terminate(error) {
+				if (failure) return;
+				failure = error;
+				if (child.pid === void 0) return;
+				try {
+					process.kill(-child.pid, "SIGKILL");
+				} catch (cause) {
+					if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH")) {
+						failure = new Error("Failed to terminate the update command process group.", { cause });
+						reject(failure);
+					}
+				}
+			}
+			function accountOutput(chunk) {
+				outputBytes += chunk.length;
+				if (outputBytes > maxBuffer) terminate(/* @__PURE__ */ new Error("The update command exceeded its output limit."));
+			}
+			child.stdout.on("data", accountOutput);
+			child.stderr.on("data", accountOutput);
+			child.stdout.pipe(process.stdout, { end: false });
+			child.stderr.pipe(process.stderr, { end: false });
+			child.once("error", reject);
+			child.once("exit", (code, signal) => {
+				if (code !== 0) terminate(/* @__PURE__ */ new Error(`The update command failed (exit ${code}, signal ${signal}).`));
+			});
+			child.once("close", () => {
+				if (failure) reject(failure);
+				else resolve();
+			});
+		});
+	}
+	async collectChanges() {
+		await this.git(["add", "--all"]);
+		const fields = records(await this.git([
+			"diff",
+			"--cached",
+			"--raw",
+			"--no-renames",
+			"--no-abbrev",
+			"-z"
+		]));
+		const changes = [];
+		for (let position = 0; position < fields.length; position += 2) {
+			const match = /^:(\d{6}) (\d{6}) [0-9a-f]+ [0-9a-f]+ ([AMDT])$/.exec(fields[position] ?? "");
+			const path = fields[position + 1];
+			if (!match || path === void 0) throw new Error("Unsupported staged Git change.");
+			const [, previousMode, mode, status] = match;
+			if (status === "D") {
+				changes.push({
+					path,
+					mode: fileMode(previousMode, path),
+					content: null
+				});
+				continue;
+			}
+			if (status !== "A") fileMode(previousMode, path);
+			changes.push({
 				path,
-				mode,
-				content
+				mode: fileMode(mode, path),
+				content: await this.git(["show", `:${path}`])
 			});
 		}
+		return changes;
 	}
-	return result;
-}
+};
 //#endregion
 //#region src/services/config.ts
-const nonempty = /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ minLength(1));
 const configSchema = /* @__PURE__ */ strictObject({
 	packageFiles: /* @__PURE__ */ array(nonempty),
 	tagPrefix: /* @__PURE__ */ optional(/* @__PURE__ */ string(), "v"),
@@ -25781,33 +25744,43 @@ var PackageService = class {
 			throw new Error(`Invalid package version or JSON: ${file}`, { cause });
 		}
 	}
-	async readVersion(file) {
-		return (await this.readPackage(file)).version;
-	}
 	resolveFiles(packageFiles) {
 		return this.store.resolve(packageFiles);
 	}
 	async update(packageFiles, version) {
-		assertStableVersion(version);
 		const files = await this.store.resolve(packageFiles);
 		const packages = await Promise.all(files.map((file) => this.readPackage(file)));
 		for (const pkg of packages) {
 			pkg.data["version"] = version;
 			await this.store.write(pkg.file, serializePackage(pkg.source, pkg.data));
 		}
-		return {
-			version,
-			files
-		};
+		return files;
 	}
 	async verify(files, version) {
-		assertStableVersion(version);
 		for (const file of files) {
-			const actual = await this.readVersion(file);
+			const actual = (await this.readPackage(file)).version;
 			if (actual !== version) throw new Error(`Package version differs from ${version}: ${file} (${actual})`);
 		}
 	}
 };
+//#endregion
+//#region src/services/release-names.ts
+function releaseNames(config, version) {
+	const tag = config.tagPrefix + version;
+	return {
+		tag,
+		branch: config.branchPrefix + tag
+	};
+}
+function parseManagedBranch(config, branch) {
+	const prefix = config.branchPrefix + config.tagPrefix;
+	if (!branch.startsWith(prefix)) return;
+	const version = branch.slice(prefix.length);
+	return isStableVersion(version) ? version : void 0;
+}
+function preparationMessage(tag) {
+	return `chore: bump version to ${tag}\n\nUpdate the selected files to a shared version for release.`;
+}
 //#endregion
 //#region src/services/preparation.ts
 var PreparationService = class {
@@ -25817,51 +25790,30 @@ var PreparationService = class {
 		this.workspace = workspace;
 		this.packages = packages;
 	}
-	assertCheckout(commit) {
-		return this.workspace.assertCheckout(commit);
-	}
-	async updateVersions(config, previousVersion, type) {
+	async plan(config, commit, previousVersion, type) {
+		await this.workspace.assertCheckout(commit);
 		const version = bumpVersion(previousVersion, type);
-		const tag = config.tagPrefix + version;
-		const branch = config.branchPrefix + tag;
+		const { tag, branch } = releaseNames(config, version);
 		await this.workspace.validateRefs([`refs/tags/${tag}`, `refs/heads/${branch}`]);
 		return {
-			...await this.packages.update(config.packageFiles, version),
 			previousVersion,
+			version,
 			tag,
 			branch
 		};
 	}
-	async finish(config, updated) {
-		if (config.updateCommand) await this.workspace.runUpdateCommand(config.updateCommand, updated.previousVersion, updated.version);
-		await this.packages.verify(updated.files, updated.version);
+	async apply(config, plan) {
+		const files = await this.packages.update(config.packageFiles, plan.version);
+		if (config.updateCommand) await this.workspace.runUpdateCommand(config.updateCommand, plan.previousVersion, plan.version);
+		await this.packages.verify(files, plan.version);
 		return this.workspace.collectChanges();
 	}
-	async verifyMerged(config, commit, branch) {
+	async verifyMerged(config, commit, version) {
 		await this.workspace.assertCheckout(commit);
-		const prefix = config.branchPrefix + config.tagPrefix;
-		if (!branch.startsWith(prefix)) throw new Error("Not a release preparation branch.");
-		const version = branch.slice(prefix.length);
-		assertStableVersion(version);
-		const tag = config.tagPrefix + version;
 		const files = await this.packages.resolveFiles(config.packageFiles);
 		await this.packages.verify(files, version);
-		await this.workspace.validateRefs([`refs/tags/${tag}`, `refs/heads/${branch}`]);
-		return {
-			version,
-			tag
-		};
 	}
 };
-//#endregion
-//#region src/services/release-names.ts
-function managedBranch(config, branch) {
-	const prefix = config.branchPrefix + config.tagPrefix;
-	return branch.startsWith(prefix) && isStableVersion(branch.slice(prefix.length));
-}
-function preparationMessage(tag) {
-	return `chore: bump version to ${tag}\n\nUpdate the selected files to a shared version for release.`;
-}
 //#endregion
 //#region src/services/releases.ts
 function result(release, tag, commit) {
@@ -25894,7 +25846,7 @@ var ReleaseService = class {
 	}
 	async createPreparation(input) {
 		const { config, tag, branch } = input;
-		const previous = (await this.repository.listOpenPullRequests(input.baseBranch)).filter((pull) => pull.repository === input.repository && managedBranch(config, pull.branch));
+		const previous = (await this.repository.listOpenPullRequests(input.baseBranch)).filter((pull) => pull.repository === input.repository && parseManagedBranch(config, pull.branch) !== void 0);
 		const existing = await this.repository.getBranch(branch);
 		const orphaned = existing && !previous.some((pull) => pull.branch === branch);
 		if (orphaned) {
@@ -25932,9 +25884,7 @@ var ReleaseService = class {
 		const tagged = await this.tagCommit(tag);
 		if (tagged && tagged !== commit) throw new Error("The tag does not point to the merge commit.");
 		if (!tagged) await this.repository.createTag(tag, commit);
-		const release = existing ?? await this.repository.createDraft(tag, commit);
-		if (!release.draft || release.tag !== tag || release.commit !== commit) throw new Error("The created release does not match the expected draft, tag, or commit.");
-		return result(release, tag, commit);
+		return result(existing ?? await this.repository.createDraft(tag, commit), tag, commit);
 	}
 	async publish(input) {
 		const tags = input.versionTags ? versionTags(input.tag, input.versionTags.prefix) : [];
@@ -25944,7 +25894,6 @@ var ReleaseService = class {
 		if (release.commit !== input.commit || await this.tagCommit(input.tag) !== input.commit) throw new Error("The release commit does not match.");
 		if ((await this.repository.listAssets(input.releaseId)).some((asset) => asset.state !== "uploaded")) throw new Error("Asset uploads are incomplete.");
 		const published = await this.repository.publishRelease(input.releaseId);
-		if (published.draft || published.tag !== input.tag || published.id !== input.releaseId) throw new Error("The published release does not match the expected state, tag, or ID.");
 		for (const tag of tags) if (await this.repository.getTag(tag)) await this.repository.updateTag(tag, input.commit);
 		else await this.repository.createTag(tag, input.commit);
 		return result(published, input.tag, input.commit);
@@ -25955,45 +25904,42 @@ var ReleaseService = class {
 async function draft(config, context, services) {
 	const event = context.event;
 	if (event.kind !== "pull-request") throw new Error("Run this mode from a pull_request event.");
-	if (event.action !== "closed" || !event.merged || event.baseBranch !== context.defaultBranch || event.repository !== context.repository || !managedBranch(config, event.branch)) return { ready: false };
+	const version = parseManagedBranch(config, event.branch);
+	if (event.action !== "closed" || !event.merged || event.baseBranch !== context.defaultBranch || event.repository !== context.repository || version === void 0) return { ready: false };
 	if (!event.mergeCommit) throw new Error("The merge commit is missing.");
-	const { version, tag } = await services.preparation.verifyMerged(config, event.mergeCommit, event.branch);
+	await services.preparation.verifyMerged(config, event.mergeCommit, version);
 	return {
 		ready: true,
 		version,
-		...await services.releases.ensureDraft(tag, event.mergeCommit)
+		...await services.releases.ensureDraft(releaseNames(config, version).tag, event.mergeCommit)
 	};
 }
 //#endregion
 //#region src/usecases/prepare.ts
 async function prepare(config, context, services, type) {
 	if (context.event.kind !== "dispatch" || context.ref !== `refs/heads/${context.defaultBranch}`) throw new Error(`Run prepare with workflow_dispatch on ${context.defaultBranch}.`);
-	await services.preparation.assertCheckout(context.sha);
 	await services.releases.assertBaseCommit(context.defaultBranch, context.sha);
 	const previousVersion = await services.releases.currentVersion(config.tagPrefix);
-	const updated = await services.preparation.updateVersions(config, previousVersion, type);
-	await services.releases.assertTagAvailable(updated.tag);
-	const changes = await services.preparation.finish(config, updated);
+	const plan = await services.preparation.plan(config, context.sha, previousVersion, type);
+	await services.releases.assertTagAvailable(plan.tag);
+	const changes = await services.preparation.apply(config, plan);
 	return services.releases.createPreparation({
 		config,
 		repository: context.repository,
 		baseBranch: context.defaultBranch,
 		baseCommit: context.sha,
-		version: updated.version,
-		tag: updated.tag,
-		branch: updated.branch,
+		version: plan.version,
+		tag: plan.tag,
+		branch: plan.branch,
 		changes
 	});
 }
 //#endregion
 //#region src/usecases/publish.ts
-function publish(releases, input) {
-	return releases.publish(input);
-}
 async function publishMerged(config, context, services) {
 	const release = await draft(config, context, services);
 	if (!release.ready) return release;
-	const published = await publish(services.releases, {
+	const published = await services.releases.publish({
 		releaseId: release.releaseId,
 		tag: release.tag,
 		commit: release.commit,
@@ -26015,20 +25961,24 @@ async function main() {
 	]), getInput("mode", { required: true }));
 	const token = getInput("token", { required: true });
 	setSecret(token);
-	const nonempty = /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ minLength(1));
+	const segment = /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ regex$2(/^[\w.-]+$/));
 	const environment = parse$3(/* @__PURE__ */ object({
 		GITHUB_API_URL: /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ url()),
-		GITHUB_REPOSITORY: /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ regex$2(/^[\w.-]+\/[\w.-]+$/)),
+		GITHUB_REPOSITORY: /* @__PURE__ */ pipe(/* @__PURE__ */ string(), /* @__PURE__ */ transform((value) => value.split("/")), /* @__PURE__ */ strictTuple([segment, segment])),
 		GITHUB_WORKSPACE: nonempty
 	}), process.env);
-	const releases = new ReleaseService(new GitHub(environment.GITHUB_API_URL, environment.GITHUB_REPOSITORY, token));
+	const [owner, repo] = environment.GITHUB_REPOSITORY;
+	const releases = new ReleaseService(new GitHub(environment.GITHUB_API_URL, {
+		owner,
+		repo
+	}, token));
 	const root = resolve(environment.GITHUB_WORKSPACE);
 	const configPath = resolve(root, getInput("config", { required: true }));
 	const configSource = await readFile(configPath, "utf8");
 	const config = parse$3(configSchema, JSON.parse(configSource));
 	let outputs;
 	const publishInput = mode === "publish" ? parsePublishInput(getInput("release-id"), getInput("tag"), getInput("commit")) : void 0;
-	if (publishInput) outputs = await publish(releases, {
+	if (publishInput) outputs = await releases.publish({
 		...publishInput,
 		versionTags: config.updateVersionTags ? { prefix: config.tagPrefix } : void 0
 	});
@@ -26042,7 +25992,7 @@ async function main() {
 		const eventSource = await readFile(checkout.GITHUB_EVENT_PATH, "utf8");
 		const event = JSON.parse(eventSource);
 		const context = {
-			repository: environment.GITHUB_REPOSITORY,
+			repository: `${owner}/${repo}`,
 			defaultBranch: parseDefaultBranch(event),
 			event: parseReleaseEvent(checkout.GITHUB_EVENT_NAME, event),
 			sha: checkout.GITHUB_SHA,
@@ -26050,7 +26000,7 @@ async function main() {
 		};
 		const packages = new PackageService(new FileSystemPackages(root));
 		const services = {
-			preparation: new PreparationService(createWorkspace(root), packages),
+			preparation: new PreparationService(new GitWorkspace(root), packages),
 			releases
 		};
 		if (mode === "prepare") outputs = await prepare(config, context, services, parse$3(/* @__PURE__ */ picklist([
